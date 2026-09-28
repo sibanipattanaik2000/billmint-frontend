@@ -13,19 +13,34 @@ import {
   IndianRupee,
   Percent,
   Boxes,
+  Smartphone,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
 type FormState = {
   name: string;
   itemType: "PRODUCT" | "SERVICE";
+
+  /**
+   * Internal business item code.
+   * Sales will use this code to identify the item.
+   */
   sku: string;
+
+  /**
+   * Physical barcode.
+   * Can be entered manually or populated by a hardware scanner.
+   */
   barcode: string;
+
+  /**
+   * IMEI is the primary serialized identifier
+   * for mobile/IMEI-tracked inventory.
+   */
+  imei: string;
 
   categoryId: string;
   unitId: string;
-
-  hsnSac: string;
 
   salePrice: string;
   purchasePrice: string;
@@ -51,13 +66,13 @@ type FormState = {
 const initialForm: FormState = {
   name: "",
   itemType: "PRODUCT",
+
   sku: "",
   barcode: "",
+  imei: "",
 
   categoryId: "",
   unitId: "",
-
-  hsnSac: "",
 
   salePrice: "",
   purchasePrice: "",
@@ -76,7 +91,7 @@ const initialForm: FormState = {
   description: "",
 
   trackBatch: false,
-  trackSerial: false,
+  trackSerial: true,
   trackExpiry: false,
 };
 
@@ -110,6 +125,9 @@ function Input({
   type = "text",
   prefix,
   suffix,
+  onKeyDown,
+  inputMode,
+  maxLength,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -117,6 +135,9 @@ function Input({
   type?: string;
   prefix?: React.ReactNode;
   suffix?: React.ReactNode;
+  onKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  maxLength?: number;
 }) {
   return (
     <div className="relative">
@@ -130,7 +151,10 @@ function Input({
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
         placeholder={placeholder}
+        inputMode={inputMode}
+        maxLength={maxLength}
         className={[
           "h-10 w-full rounded-md border border-slate-300 bg-white",
           "text-sm text-slate-800 outline-none transition",
@@ -209,7 +233,9 @@ function Section({
           {icon}
         </div>
 
-        <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+        <h2 className="text-sm font-semibold text-slate-800">
+          {title}
+        </h2>
       </div>
 
       <div className="p-5">{children}</div>
@@ -226,7 +252,7 @@ export default function NewItemPage() {
 
   const update = <K extends keyof FormState>(
     key: K,
-    value: FormState[K]
+    value: FormState[K],
   ) => {
     setForm((prev) => ({
       ...prev,
@@ -234,10 +260,50 @@ export default function NewItemPage() {
     }));
   };
 
+  /**
+   * Barcode scanners generally behave like keyboards.
+   *
+   * They type the barcode into the focused input and
+   * send Enter at the end. We intentionally keep the
+   * scanned value in the same barcode field so both
+   * manual entry and scanner entry use one contract.
+   */
+  const handleBarcodeKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>,
+  ) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+
+    const scannedBarcode = form.barcode.trim();
+
+    if (!scannedBarcode) {
+      return;
+    }
+
+    update("barcode", scannedBarcode);
+  };
+
+  /**
+   * IMEI must be numeric only.
+   *
+   * Standard IMEI is 15 digits.
+   * Backend/database will additionally enforce uniqueness.
+   */
+  const handleImeiChange = (value: string) => {
+    const numericValue = value.replace(/\D/g, "").slice(0, 15);
+
+    update("imei", numericValue);
+  };
+
   const handleSave = async (saveAndNew = false) => {
     setError("");
 
-    if (!form.name.trim()) {
+    const itemName = form.name.trim();
+
+    if (!itemName) {
       setError("Please enter item name.");
       return;
     }
@@ -247,27 +313,68 @@ export default function NewItemPage() {
       return;
     }
 
+    if (form.itemType === "PRODUCT") {
+      const imei = form.imei.trim();
+
+      if (!imei) {
+        setError("IMEI number is required for a product.");
+        return;
+      }
+
+      if (!/^\d{15}$/.test(imei)) {
+        setError("IMEI number must contain exactly 15 digits.");
+        return;
+      }
+    }
+
     try {
       setSaving(true);
 
       const payload = {
-        name: form.name.trim(),
+        name: itemName,
 
+        /**
+         * Keep SKU as the API field for compatibility.
+         * This is the internal Item Code used by Sales lookup.
+         */
         sku: form.sku.trim() || undefined,
+
+        /**
+         * Barcode remains optional because some non-barcode
+         * products may not have one.
+         */
         barcode: form.barcode.trim() || undefined,
+
+        /**
+         * IMEI is now a first-class item field.
+         *
+         * Do not send it for services.
+         */
+        imei:
+          form.itemType === "PRODUCT"
+            ? form.imei.trim()
+            : undefined,
 
         categoryId: form.categoryId || undefined,
         unitId: form.unitId || undefined,
 
-        description: form.description.trim() || undefined,
+        description:
+          form.description.trim() || undefined,
 
         purchasePrice:
-          form.purchasePrice === "" ? 0 : Number(form.purchasePrice),
+          form.purchasePrice === ""
+            ? 0
+            : Number(form.purchasePrice),
 
         salePrice:
-          form.salePrice === "" ? 0 : Number(form.salePrice),
+          form.salePrice === ""
+            ? 0
+            : Number(form.salePrice),
 
-        mrp: form.mrp === "" ? null : Number(form.mrp),
+        mrp:
+          form.mrp === ""
+            ? null
+            : Number(form.mrp),
 
         openingStock:
           form.itemType === "SERVICE"
@@ -284,29 +391,39 @@ export default function NewItemPage() {
               : Number(form.minimumStock),
 
         gstRate:
-          form.gstRate === "" ? 0 : Number(form.gstRate),
-
-        hsnSac: form.hsnSac.trim() || undefined,
+          form.gstRate === ""
+            ? 0
+            : Number(form.gstRate),
 
         discountPercent:
           form.discountPercent === ""
             ? 0
             : Number(form.discountPercent),
 
-        trackBatch:
-          form.itemType === "PRODUCT" && form.trackBatch,
-
+        /**
+         * IMEI-tracked products are always serialized.
+         * This prevents accidentally treating an IMEI device
+         * as anonymous quantity-only stock.
+         */
         trackSerial:
-          form.itemType === "PRODUCT" && form.trackSerial,
+          form.itemType === "PRODUCT"
+            ? true
+            : false,
+
+        trackBatch:
+          form.itemType === "PRODUCT" &&
+          form.trackBatch,
 
         trackExpiry:
-          form.itemType === "PRODUCT" && form.trackExpiry,
+          form.itemType === "PRODUCT" &&
+          form.trackExpiry,
       };
 
       await api.createItem(payload);
 
       if (saveAndNew) {
         setForm(initialForm);
+
         window.scrollTo({
           top: 0,
           behavior: "smooth",
@@ -321,7 +438,7 @@ export default function NewItemPage() {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to create item. Please try again."
+          : "Unable to create item. Please try again.",
       );
     } finally {
       setSaving(false);
@@ -334,52 +451,6 @@ export default function NewItemPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* HEADER */}
-      <div className="sticky top-0 z-20 border-b border-slate-200 bg-white">
-        <div className="flex h-16 items-center justify-between px-6">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-
-            <div>
-              <h1 className="text-lg font-semibold text-slate-900">
-                Add Item
-              </h1>
-
-              <p className="text-xs text-slate-500">
-                Create a new product or service
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="h-9 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-600 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => handleSave(false)}
-              className="flex h-9 items-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Save className="h-4 w-4" />
-
-              {saving ? "Saving..." : "Save Item"}
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* CONTENT */}
       <main className="mx-auto max-w-5xl px-6 py-6">
         {error && (
@@ -391,7 +462,7 @@ export default function NewItemPage() {
         )}
 
         <div className="space-y-5">
-          {/* BASIC DETAILS */}
+          {/* ITEM DETAILS */}
           <Section
             icon={<Package className="h-4 w-4" />}
             title="Item Details"
@@ -404,7 +475,9 @@ export default function NewItemPage() {
               >
                 <Input
                   value={form.name}
-                  onChange={(value) => update("name", value)}
+                  onChange={(value) =>
+                    update("name", value)
+                  }
                   placeholder="Enter item name"
                 />
               </Field>
@@ -414,7 +487,9 @@ export default function NewItemPage() {
                 <div className="flex h-10 rounded-md border border-slate-300 bg-slate-50 p-1">
                   <button
                     type="button"
-                    onClick={() => update("itemType", "PRODUCT")}
+                    onClick={() =>
+                      update("itemType", "PRODUCT")
+                    }
                     className={[
                       "flex-1 rounded text-sm font-medium transition",
                       form.itemType === "PRODUCT"
@@ -427,7 +502,9 @@ export default function NewItemPage() {
 
                   <button
                     type="button"
-                    onClick={() => update("itemType", "SERVICE")}
+                    onClick={() =>
+                      update("itemType", "SERVICE")
+                    }
                     className={[
                       "flex-1 rounded text-sm font-medium transition",
                       form.itemType === "SERVICE"
@@ -440,29 +517,58 @@ export default function NewItemPage() {
                 </div>
               </Field>
 
+              {/* ITEM CODE */}
               <Field label="Item Code / SKU">
                 <Input
                   value={form.sku}
-                  onChange={(value) => update("sku", value)}
+                  onChange={(value) =>
+                    update("sku", value)
+                  }
                   placeholder="Enter item code"
                 />
               </Field>
 
+              {/* IMEI */}
+              {form.itemType === "PRODUCT" && (
+                <Field
+                  label="IMEI Number"
+                  required
+                >
+                  <Input
+                    value={form.imei}
+                    onChange={handleImeiChange}
+                    placeholder="Enter 15-digit IMEI"
+                    prefix={
+                      <Smartphone className="h-4 w-4" />
+                    }
+                    inputMode="numeric"
+                    maxLength={15}
+                  />
+
+                  <p className="mt-1.5 text-xs text-slate-400">
+                    Unique identifier for this device.
+                  </p>
+                </Field>
+              )}
+
+              {/* BARCODE */}
               <Field label="Barcode">
                 <Input
                   value={form.barcode}
-                  onChange={(value) => update("barcode", value)}
+                  onChange={(value) =>
+                    update("barcode", value)
+                  }
+                  onKeyDown={handleBarcodeKeyDown}
                   placeholder="Scan or enter barcode"
-                  prefix={<Barcode className="h-4 w-4" />}
+                  prefix={
+                    <Barcode className="h-4 w-4" />
+                  }
                 />
-              </Field>
 
-              <Field label="HSN / SAC Code">
-                <Input
-                  value={form.hsnSac}
-                  onChange={(value) => update("hsnSac", value)}
-                  placeholder="Enter HSN / SAC code"
-                />
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Focus this field and scan using a USB/Bluetooth
+                  barcode scanner.
+                </p>
               </Field>
 
               {/* UNIT */}
@@ -471,22 +577,38 @@ export default function NewItemPage() {
                   <div className="flex gap-2">
                     <Select
                       value={form.unitId}
-                      onChange={(value) => update("unitId", value)}
+                      onChange={(value) =>
+                        update("unitId", value)
+                      }
                     >
-                      <option value="">Select unit</option>
-                      <option value="PCS">PCS</option>
-                      <option value="BOX">BOX</option>
-                      <option value="KG">KG</option>
-                      <option value="GRAM">GRAM</option>
-                      <option value="LTR">LTR</option>
-                      <option value="MTR">MTR</option>
+                      <option value="">
+                        Select unit
+                      </option>
+                      <option value="PCS">
+                        PCS
+                      </option>
+                      <option value="BOX">
+                        BOX
+                      </option>
+                      <option value="KG">
+                        KG
+                      </option>
+                      <option value="GRAM">
+                        GRAM
+                      </option>
+                      <option value="LTR">
+                        LTR
+                      </option>
+                      <option value="MTR">
+                        MTR
+                      </option>
                     </Select>
 
                     <AddButton
                       title="Add Unit"
                       onClick={() => {
                         window.alert(
-                          "Unit creation can be connected to your Unit master."
+                          "Unit creation can be connected to your Unit master.",
                         );
                       }}
                     />
@@ -503,25 +625,38 @@ export default function NewItemPage() {
                       update("categoryId", value)
                     }
                   >
-                    <option value="">Select category</option>
-                    <option value="GENERAL">General</option>
-                    <option value="ELECTRONICS">Electronics</option>
-                    <option value="GROCERY">Grocery</option>
-                    <option value="CLOTHING">Clothing</option>
-                    <option value="OTHER">Other</option>
+                    <option value="">
+                      Select category
+                    </option>
+                    <option value="GENERAL">
+                      General
+                    </option>
+                    <option value="ELECTRONICS">
+                      Electronics
+                    </option>
+                    <option value="GROCERY">
+                      Grocery
+                    </option>
+                    <option value="CLOTHING">
+                      Clothing
+                    </option>
+                    <option value="OTHER">
+                      Other
+                    </option>
                   </Select>
 
                   <AddButton
                     title="Add Category"
                     onClick={() => {
                       window.alert(
-                        "Category creation can be connected to your Category master."
+                        "Category creation can be connected to your Category master.",
                       );
                     }}
                   />
                 </div>
               </Field>
 
+              {/* DESCRIPTION */}
               <Field
                 label="Description"
                 className="md:col-span-2"
@@ -529,7 +664,10 @@ export default function NewItemPage() {
                 <textarea
                   value={form.description}
                   onChange={(e) =>
-                    update("description", e.target.value)
+                    update(
+                      "description",
+                      e.target.value,
+                    )
                   }
                   rows={3}
                   placeholder="Enter item description"
@@ -545,12 +683,18 @@ export default function NewItemPage() {
             title="Price Details"
           >
             <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-              <Field label="Sale Price" required>
+              <Field
+                label="Sale Price"
+                required
+              >
                 <Input
                   type="number"
                   value={form.salePrice}
                   onChange={(value) =>
-                    update("salePrice", value)
+                    update(
+                      "salePrice",
+                      value,
+                    )
                   }
                   placeholder="0.00"
                   prefix={
@@ -564,7 +708,10 @@ export default function NewItemPage() {
                   type="number"
                   value={form.purchasePrice}
                   onChange={(value) =>
-                    update("purchasePrice", value)
+                    update(
+                      "purchasePrice",
+                      value,
+                    )
                   }
                   placeholder="0.00"
                   prefix={
@@ -577,7 +724,9 @@ export default function NewItemPage() {
                 <Input
                   type="number"
                   value={form.mrp}
-                  onChange={(value) => update("mrp", value)}
+                  onChange={(value) =>
+                    update("mrp", value)
+                  }
                   placeholder="0.00"
                   prefix={
                     <IndianRupee className="h-4 w-4" />
@@ -590,11 +739,13 @@ export default function NewItemPage() {
               <label className="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
                 <input
                   type="checkbox"
-                  checked={form.salePriceIncludesTax}
+                  checked={
+                    form.salePriceIncludesTax
+                  }
                   onChange={(e) =>
                     update(
                       "salePriceIncludesTax",
-                      e.target.checked
+                      e.target.checked,
                     )
                   }
                   className="h-4 w-4 accent-brand-600"
@@ -614,11 +765,13 @@ export default function NewItemPage() {
               <label className="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
                 <input
                   type="checkbox"
-                  checked={form.purchasePriceIncludesTax}
+                  checked={
+                    form.purchasePriceIncludesTax
+                  }
                   onChange={(e) =>
                     update(
                       "purchasePriceIncludesTax",
-                      e.target.checked
+                      e.target.checked,
                     )
                   }
                   className="h-4 w-4 accent-brand-600"
@@ -644,28 +797,41 @@ export default function NewItemPage() {
           >
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <Field label="GST Rate">
-                <div className="relative">
-                  <Select
-                    value={form.gstRate}
-                    onChange={(value) =>
-                      update("gstRate", value)
-                    }
-                  >
-                    <option value="0">GST 0%</option>
-                    <option value="5">GST 5%</option>
-                    <option value="12">GST 12%</option>
-                    <option value="18">GST 18%</option>
-                    <option value="28">GST 28%</option>
-                  </Select>
-                </div>
+                <Select
+                  value={form.gstRate}
+                  onChange={(value) =>
+                    update("gstRate", value)
+                  }
+                >
+                  <option value="0">
+                    GST 0%
+                  </option>
+                  <option value="5">
+                    GST 5%
+                  </option>
+                  <option value="12">
+                    GST 12%
+                  </option>
+                  <option value="18">
+                    GST 18%
+                  </option>
+                  <option value="28">
+                    GST 28%
+                  </option>
+                </Select>
               </Field>
 
               <Field label="Discount">
                 <Input
                   type="number"
-                  value={form.discountPercent}
+                  value={
+                    form.discountPercent
+                  }
                   onChange={(value) =>
-                    update("discountPercent", value)
+                    update(
+                      "discountPercent",
+                      value,
+                    )
                   }
                   placeholder="0"
                   suffix="%"
@@ -684,9 +850,14 @@ export default function NewItemPage() {
                 <Field label="Opening Quantity">
                   <Input
                     type="number"
-                    value={form.openingStock}
+                    value={
+                      form.openingStock
+                    }
                     onChange={(value) =>
-                      update("openingStock", value)
+                      update(
+                        "openingStock",
+                        value,
+                      )
                     }
                     placeholder="0"
                   />
@@ -695,9 +866,14 @@ export default function NewItemPage() {
                 <Field label="Opening Stock Rate">
                   <Input
                     type="number"
-                    value={form.openingStockRate}
+                    value={
+                      form.openingStockRate
+                    }
                     onChange={(value) =>
-                      update("openingStockRate", value)
+                      update(
+                        "openingStockRate",
+                        value,
+                      )
                     }
                     placeholder="0.00"
                     prefix={
@@ -709,9 +885,14 @@ export default function NewItemPage() {
                 <Field label="Minimum Stock">
                   <Input
                     type="number"
-                    value={form.minimumStock}
+                    value={
+                      form.minimumStock
+                    }
                     onChange={(value) =>
-                      update("minimumStock", value)
+                      update(
+                        "minimumStock",
+                        value,
+                      )
                     }
                     placeholder="0"
                   />
@@ -720,8 +901,10 @@ export default function NewItemPage() {
 
               <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-xs text-slate-500">
-                  Opening stock is the quantity currently available
-                  when this item is first created.
+                  For IMEI-tracked products, the backend
+                  will later validate that the serialized
+                  inventory quantity and individual IMEI
+                  records remain consistent.
                 </p>
               </div>
             </Section>
@@ -739,7 +922,10 @@ export default function NewItemPage() {
                     type="checkbox"
                     checked={form.trackBatch}
                     onChange={(e) =>
-                      update("trackBatch", e.target.checked)
+                      update(
+                        "trackBatch",
+                        e.target.checked,
+                      )
                     }
                     className="h-4 w-4 accent-brand-600"
                   />
@@ -749,19 +935,23 @@ export default function NewItemPage() {
                   </span>
                 </label>
 
-                <label className="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
+                <label className="flex cursor-pointer items-center gap-3 rounded-md border border-brand-200 bg-brand-50 px-4 py-3">
                   <input
                     type="checkbox"
-                    checked={form.trackSerial}
-                    onChange={(e) =>
-                      update("trackSerial", e.target.checked)
-                    }
+                    checked
+                    readOnly
                     className="h-4 w-4 accent-brand-600"
                   />
 
-                  <span className="text-sm font-medium text-slate-700">
-                    Track serial numbers
-                  </span>
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">
+                      Track IMEI / serial
+                    </span>
+
+                    <p className="text-xs text-slate-500">
+                      Required for product inventory.
+                    </p>
+                  </div>
                 </label>
 
                 <label className="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
@@ -769,7 +959,10 @@ export default function NewItemPage() {
                     type="checkbox"
                     checked={form.trackExpiry}
                     onChange={(e) =>
-                      update("trackExpiry", e.target.checked)
+                      update(
+                        "trackExpiry",
+                        e.target.checked,
+                      )
                     }
                     className="h-4 w-4 accent-brand-600"
                   />
@@ -809,7 +1002,10 @@ export default function NewItemPage() {
             className="flex h-10 items-center gap-2 rounded-md bg-brand-600 px-6 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:opacity-60"
           >
             <Save className="h-4 w-4" />
-            {saving ? "Saving..." : "Save Item"}
+
+            {saving
+              ? "Saving..."
+              : "Save Item"}
           </button>
         </div>
       </main>
