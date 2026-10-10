@@ -1,200 +1,1244 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import {
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  Package,
+  Plus,
+  RefreshCw,
+  Search,
+} from "lucide-react";
+import { ApiError, api, formatINR } from "@/lib/api";
 
 interface Item {
   id: string;
   name: string;
-  quantity: number;
-  salePrice: number;
-  purchasePrice: number;
-  stockValue: number;
+  sku?: string | null;
+  barcode?: string | null;
+  imei?: string | null;
+
+  description?: string | null;
+
+  purchasePrice?: number | string | null;
+  salePrice?: number | string | null;
+  mrp?: number | string | null;
+
+  openingStock?: number | string | null;
+  currentStock?: number | string | null;
+  minimumStock?: number | string | null;
+
+  gstRate?: number | string | null;
+  hsnSac?: string | null;
+  discountPercent?: number | string | null;
+
+  imageUrl?: string | null;
+
+  trackBatch?: boolean;
+  trackSerial?: boolean;
+  trackExpiry?: boolean;
+
+  status?: string;
+
+  createdAt?: string;
+  updatedAt?: string;
+
+  category?: {
+    id?: string;
+    name?: string;
+  } | null;
+
+  brand?: {
+    id?: string;
+    name?: string;
+  } | null;
+
+  unit?: {
+    id?: string;
+    name?: string;
+    shortName?: string;
+  } | null;
+
+  supplier?: {
+    id?: string;
+    name?: string;
+  } | null;
+
+  stockMovements?: StockMovement[];
 }
 
-interface Transaction {
-  type: string;
-  invoice: string;
-  name: string;
+interface StockMovement {
+  id: string;
   date: string;
-  quantity: number;
-  price: number;
-  status: string;
+  type: string;
+  quantityIn?: number | string | null;
+  quantityOut?: number | string | null;
+  balance?: number | string | null;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  notes?: string | null;
 }
 
-const initialItems: Item[] = [
-  { id: "1", name: "ONEPLUS 3", quantity: 1, salePrice: 8000, purchasePrice: 0, stockValue: 0 },
-  { id: "2", name: "OPPO", quantity: 0, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "3", name: "10 OR D USED", quantity: 0, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "4", name: "11 PRO 256", quantity: 1, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "5", name: "13 MINI 256GB", quantity: 1, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "6", name: "2000 FOR REALME XT", quantity: 1, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "7", name: "20W ADAPTER", quantity: 12, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "8", name: "20W ADAPTER", quantity: 111, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "9", name: "65 PLUS 128", quantity: 1, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "10", name: "ACER ASPIRE3 3 A315-51", quantity: 1, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "11", name: "ACER LAPTOP", quantity: 1, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "12", name: "AGM 2 5G", quantity: 1, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "13", name: "AIRPODS REPLICA", quantity: 7, salePrice: 0, purchasePrice: 0, stockValue: 0 },
-  { id: "14", name: "REALME C 31", quantity: 1, salePrice: 7500, purchasePrice: 0, stockValue: 0 },
-];
+interface ItemsResponse {
+  success: boolean;
+  data: Item[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
 
-const sampleTransactions: Transaction[] = [
-  {
-    type: "Opening Stock",
-    invoice: "",
-    name: "Opening Stock",
-    date: "12/04/2021",
-    quantity: 1,
-    price: 0,
-    status: "",
-  },
-];
+function toNumber(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatMovementType(type: string): string {
+  const normalized = type
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  return normalized.replace(/\b\w/g, (char) =>
+    char.toUpperCase()
+  );
+}
+
+function movementQuantity(movement: StockMovement): number {
+  const quantityIn = toNumber(movement.quantityIn);
+  const quantityOut = toNumber(movement.quantityOut);
+
+  if (quantityIn > 0) {
+    return quantityIn;
+  }
+
+  if (quantityOut > 0) {
+    return -quantityOut;
+  }
+
+  return 0;
+}
 
 export default function ItemsPage() {
   const router = useRouter();
-  const [items] = useState<Item[]>(initialItems);
-  const [search, setSearch] = useState("");
-  const [selectedItem, setSelectedItem] = useState<Item>(initialItems[0]);
 
-  const filteredItems = items.filter((item) =>
-    item.name.toLowerCase().includes(search.toLowerCase())
+  const [items, setItems] = useState<Item[]>([]);
+  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+
+  const [search, setSearch] = useState("");
+
+  const [page, setPage] = useState(1);
+  const [limit] = useState(20);
+
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [error, setError] = useState("");
+
+  /*
+   * Prevent an old search response from replacing
+   * a newer search result.
+   */
+  const [requestVersion, setRequestVersion] = useState(0);
+
+  const loadItems = useCallback(
+    async (currentPage: number, currentSearch: string) => {
+      setError("");
+
+      try {
+        const response =
+          await api.items({
+            page: currentPage,
+            limit,
+            search: currentSearch.trim(),
+          });
+
+        const result =
+          response as unknown as ItemsResponse;
+
+        const nextItems =
+          Array.isArray(result.data)
+            ? result.data
+            : [];
+
+        setItems(nextItems);
+
+        setTotal(
+          Number(
+            result.pagination?.total || 0
+          )
+        );
+
+        setTotalPages(
+          Number(
+            result.pagination?.totalPages || 0
+          )
+        );
+
+        /*
+         * Keep the current selection when possible.
+         * Otherwise select the first item returned.
+         */
+        setSelectedItem((current) => {
+          if (!nextItems.length) {
+            return null;
+          }
+
+          if (current) {
+            const matchingItem =
+              nextItems.find(
+                (item) =>
+                  item.id === current.id
+              );
+
+            if (matchingItem) {
+              return matchingItem;
+            }
+          }
+
+          return nextItems[0];
+        });
+      } catch (err) {
+        if (err instanceof ApiError) {
+          setError(err.message);
+        } else {
+          setError(
+            "Unable to load items."
+          );
+        }
+
+        setItems([]);
+        setSelectedItem(null);
+        setTotal(0);
+        setTotalPages(0);
+      }
+    },
+    [limit]
   );
 
+  /*
+   * Initial load + page changes.
+   */
+  useEffect(() => {
+    let active = true;
+
+    setLoading(true);
+
+    const timer =
+      window.setTimeout(async () => {
+        await loadItems(
+          page,
+          search
+        );
+
+        if (active) {
+          setLoading(false);
+        }
+      }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    page,
+    requestVersion,
+    loadItems,
+    search,
+  ]);
+
+  /*
+   * Load complete item details when the selected
+   * item changes.
+   */
+  useEffect(() => {
+    if (!selectedItem?.id) {
+      return;
+    }
+
+    let active = true;
+
+    setDetailLoading(true);
+
+    api
+      .item(selectedItem.id)
+      .then((response) => {
+        if (!active) return;
+
+        setSelectedItem(
+          response.data as Item
+        );
+      })
+      .catch(() => {
+        /*
+         * The list data remains visible even when
+         * detail loading fails.
+         */
+      })
+      .finally(() => {
+        if (active) {
+          setDetailLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedItem?.id]);
+
+  /*
+   * Search should restart from page 1.
+   */
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setError("");
+
+    try {
+      await loadItems(
+        page,
+        search
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const stockValue = useMemo(() => {
+    if (!selectedItem) {
+      return 0;
+    }
+
+    return (
+      toNumber(
+        selectedItem.currentStock
+      ) *
+      toNumber(
+        selectedItem.purchasePrice
+      )
+    );
+  }, [selectedItem]);
+
+  const stockStatus = useMemo(() => {
+    if (!selectedItem) {
+      return "unknown";
+    }
+
+    const currentStock =
+      toNumber(
+        selectedItem.currentStock
+      );
+
+    const minimumStock =
+      toNumber(
+        selectedItem.minimumStock
+      );
+
+    if (currentStock <= 0) {
+      return "out";
+    }
+
+    if (
+      minimumStock > 0 &&
+      currentStock <= minimumStock
+    ) {
+      return "low";
+    }
+
+    return "available";
+  }, [selectedItem]);
+
+  const movements =
+    selectedItem?.stockMovements || [];
+
   return (
-    <div className="flex-1 flex overflow-hidden bg-white">
-      {/* Left Product List */}
-      <div className="w-72 border-r flex flex-col">
-        <div className="p-3 border-b">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full border rounded pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <span className="absolute left-2.5 top-2 text-gray-400">🔍</span>
-          </div>
-        </div>
+    <div className="flex-1 flex min-h-0 overflow-hidden bg-white">
+      {/* =====================================================
+          LEFT ITEM LIST
+      ===================================================== */}
 
-        <div className="p-2">
-          <button
-            onClick={() => router.push("/items/new")}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-1.5 rounded text-sm font-medium"
-          >
-            + Add Item
-          </button>
-        </div>
+      <aside className="w-[330px] shrink-0 border-r border-slate-200 flex flex-col min-h-0">
+        {/* Header */}
+        <div className="p-4 border-b border-slate-200">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h1 className="text-lg font-semibold text-slate-900">
+                Items
+              </h1>
 
-        <div className="px-3 py-1.5 text-xs text-gray-500 flex justify-between border-b bg-gray-50">
-          <span>ITEM</span>
-          <span>QUANTITY</span>
-        </div>
-
-        <div className="flex-1 overflow-y-auto text-sm">
-          {filteredItems.map((item) => (
-            <div
-              key={item.id}
-              onClick={() => setSelectedItem(item)}
-              className={`px-3 py-2.5 cursor-pointer flex justify-between hover:bg-blue-50 ${
-                selectedItem.id === item.id ? "bg-blue-50 font-medium" : ""
-              }`}
-            >
-              <span className="truncate pr-2">{item.name}</span>
-              <span className="text-gray-600">{item.quantity}</span>
+              <p className="text-xs text-slate-500 mt-1">
+                {total}{" "}
+                {total === 1
+                  ? "item"
+                  : "items"}
+              </p>
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* Right Detail Panel */}
-      <div className="flex-1 p-6 overflow-auto">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">{selectedItem.name}</h2>
-          <div className="flex gap-2">
             <button
-              onClick={() => router.push(`/items/${selectedItem.id}/edit`)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm"
+              type="button"
+              onClick={() =>
+                router.push(
+                  "/items/new"
+                )
+              }
+              className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
             >
-              ADJUST ITEM
+              <Plus className="h-3.5 w-3.5" />
+              Add Item
             </button>
-            <Link
-              href={`/items/${selectedItem.id}/edit`}
-              className="border px-4 py-1.5 rounded text-sm hover:bg-gray-50"
-            >
-              Edit
-            </Link>
+          </div>
+
+          {/* Search */}
+          <div className="relative mt-4">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+            <input
+              type="search"
+              value={search}
+              onChange={(event) =>
+                setSearch(
+                  event.target.value
+                )
+              }
+              placeholder="Search name, code, barcode..."
+              className="w-full rounded-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+            />
           </div>
         </div>
 
-        {/* Price & Stock Info */}
-        <div className="grid grid-cols-2 gap-6 text-sm mb-8">
-          <div>
-            <div className="text-gray-500 mb-1">SALE PRICE</div>
-            <div className="font-medium text-base">
-              ₹ {selectedItem.salePrice.toLocaleString("en-IN")}.00 (excl)
+        {/* Error */}
+        {error && (
+          <div className="mx-4 mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-3">
+            <div className="flex gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+
+              <div className="text-xs text-red-700">
+                {error}
+              </div>
             </div>
           </div>
-          <div>
-            <div className="text-gray-500 mb-1">PURCHASE PRICE</div>
-            <div className="font-medium text-base">
-              ₹ {selectedItem.purchasePrice.toLocaleString("en-IN")}.00 (excl)
-            </div>
-          </div>
-          <div>
-            <div className="text-gray-500 mb-1">STOCK QUANTITY</div>
-            <div className="font-medium text-base">{selectedItem.quantity}</div>
-          </div>
-          <div>
-            <div className="text-gray-500 mb-1">STOCK VALUE</div>
-            <div className="font-medium text-base">
-              ₹ {selectedItem.stockValue.toLocaleString("en-IN")}.00
-            </div>
-          </div>
+        )}
+
+        {/* Column header */}
+        <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          <span>Item</span>
+          <span>Stock</span>
         </div>
 
-        {/* Transactions */}
-        <h3 className="font-medium text-gray-700 mb-3">TRANSACTIONS</h3>
-        <div className="border rounded overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b text-left text-gray-500">
-                <th className="py-2.5 px-3">TYPE</th>
-                <th className="py-2.5 px-3">INVOICE/RE...</th>
-                <th className="py-2.5 px-3">NAME</th>
-                <th className="py-2.5 px-3">DATE</th>
-                <th className="py-2.5 px-3">QUANTITY</th>
-                <th className="py-2.5 px-3">PRICE / UNIT</th>
-                <th className="py-2.5 px-3">STATUS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sampleTransactions.map((txn, idx) => (
-                <tr key={idx} className="border-b hover:bg-gray-50">
-                  <td className="py-2.5 px-3">{txn.type}</td>
-                  <td className="py-2.5 px-3">{txn.invoice}</td>
-                  <td className="py-2.5 px-3">{txn.name}</td>
-                  <td className="py-2.5 px-3">{txn.date}</td>
-                  <td className="py-2.5 px-3">{txn.quantity}</td>
-                  <td className="py-2.5 px-3">
-                    {txn.price > 0 ? `₹ ${txn.price}` : ""}
-                  </td>
-                  <td className="py-2.5 px-3">{txn.status}</td>
-                </tr>
+        {/* Item list */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="space-y-2 p-3">
+              {Array.from({
+                length: 7,
+              }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-14 animate-pulse rounded-md bg-slate-100"
+                />
               ))}
-              {sampleTransactions.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-gray-400">
-                    No transactions to show
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          ) : items.length === 0 ? (
+            <div className="flex h-full items-center justify-center px-6 text-center">
+              <div>
+                <Package className="mx-auto h-10 w-10 text-slate-300" />
+
+                <p className="mt-3 text-sm font-medium text-slate-700">
+                  No items found
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  {search.trim()
+                    ? "Try another search."
+                    : "Add your first item to start managing inventory."}
+                </p>
+
+                {!search.trim() && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        "/items/new"
+                      )
+                    }
+                    className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add Item
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            items.map((item) => {
+              const stock =
+                toNumber(
+                  item.currentStock
+                );
+
+              const minimum =
+                toNumber(
+                  item.minimumStock
+                );
+
+              const selected =
+                selectedItem?.id ===
+                item.id;
+
+              const stockClass =
+                stock <= 0
+                  ? "text-red-600"
+                  : minimum > 0 &&
+                    stock <= minimum
+                  ? "text-amber-600"
+                  : "text-slate-600";
+
+              return (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() =>
+                    setSelectedItem(
+                      item
+                    )
+                  }
+                  className={`w-full border-b border-slate-100 px-4 py-3 text-left transition ${
+                    selected
+                      ? "bg-blue-50"
+                      : "hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="grid grid-cols-[1fr_auto] gap-3">
+                    <div className="min-w-0">
+                      <div
+                        className={`truncate text-sm ${
+                          selected
+                            ? "font-semibold text-blue-700"
+                            : "font-medium text-slate-800"
+                        }`}
+                      >
+                        {item.name}
+                      </div>
+
+                      <div className="mt-1 truncate text-xs text-slate-500">
+                        {item.sku ||
+                          item.barcode ||
+                          "No item code"}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`text-sm font-medium ${stockClass}`}
+                    >
+                      {stock}
+                    </div>
+                  </div>
+                </button>
+              );
+            })
+          )}
         </div>
-      </div>
+
+        {/* Pagination */}
+        {!loading &&
+          totalPages > 1 && (
+            <div className="border-t border-slate-200 px-3 py-3">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() =>
+                    setPage(
+                      (current) =>
+                        Math.max(
+                          1,
+                          current - 1
+                        )
+                    )
+                  }
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Previous
+                </button>
+
+                <span className="text-xs text-slate-500">
+                  Page {page} of{" "}
+                  {totalPages}
+                </span>
+
+                <button
+                  type="button"
+                  disabled={
+                    page >= totalPages
+                  }
+                  onClick={() =>
+                    setPage(
+                      (current) =>
+                        Math.min(
+                          totalPages,
+                          current + 1
+                        )
+                    )
+                  }
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+      </aside>
+
+      {/* =====================================================
+          RIGHT DETAIL PANEL
+      ===================================================== */}
+
+      <main className="flex-1 min-w-0 min-h-0 overflow-y-auto">
+        {!selectedItem ? (
+          <div className="flex min-h-full items-center justify-center px-6">
+            <div className="text-center">
+              <Package className="mx-auto h-12 w-12 text-slate-300" />
+
+              <h2 className="mt-4 text-base font-semibold text-slate-800">
+                No item selected
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Select an item from the list.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="p-6">
+            {/* Header */}
+            <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-xl font-semibold text-slate-900">
+                    {selectedItem.name}
+                  </h2>
+
+                  {stockStatus ===
+                    "out" && (
+                    <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                      Out of stock
+                    </span>
+                  )}
+
+                  {stockStatus ===
+                    "low" && (
+                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                      Low stock
+                    </span>
+                  )}
+
+                  {stockStatus ===
+                    "available" && (
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                      In stock
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                  <span>
+                    Item Code:{" "}
+                    <strong className="font-medium text-slate-700">
+                      {selectedItem.sku ||
+                        "—"}
+                    </strong>
+                  </span>
+
+                  <span>
+                    Barcode:{" "}
+                    <strong className="font-medium text-slate-700">
+                      {selectedItem.barcode ||
+                        "—"}
+                    </strong>
+                  </span>
+
+                  {selectedItem.hsnSac && (
+                    <span>
+                      HSN/SAC:{" "}
+                      <strong className="font-medium text-slate-700">
+                        {
+                          selectedItem.hsnSac
+                        }
+                      </strong>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={refresh}
+                  disabled={
+                    refreshing ||
+                    detailLoading
+                  }
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${
+                      refreshing
+                        ? "animate-spin"
+                        : ""
+                    }`}
+                  />
+                  Refresh
+                </button>
+
+                <Link
+                  href={`/items/${selectedItem.id}/edit`}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Edit
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/items/${selectedItem.id}/edit`
+                    )
+                  }
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  Adjust Stock
+                </button>
+              </div>
+            </div>
+
+            {/* =================================================
+                SUMMARY CARDS
+            ================================================= */}
+
+            <div className="grid grid-cols-1 gap-4 py-6 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Sale Price
+                </div>
+
+                <div className="mt-2 text-lg font-semibold text-slate-900">
+                  {formatINR(
+                    toNumber(
+                      selectedItem.salePrice
+                    )
+                  )}
+                </div>
+
+                <div className="mt-1 text-xs text-slate-500">
+                  Selling price
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Purchase Price
+                </div>
+
+                <div className="mt-2 text-lg font-semibold text-slate-900">
+                  {formatINR(
+                    toNumber(
+                      selectedItem.purchasePrice
+                    )
+                  )}
+                </div>
+
+                <div className="mt-1 text-xs text-slate-500">
+                  Cost price
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Current Stock
+                </div>
+
+                <div className="mt-2 text-lg font-semibold text-slate-900">
+                  {toNumber(
+                    selectedItem.currentStock
+                  )}
+                  {selectedItem.unit
+                    ?.shortName
+                    ? ` ${selectedItem.unit.shortName}`
+                    : ""}
+                </div>
+
+                <div className="mt-1 text-xs text-slate-500">
+                  Minimum:{" "}
+                  {toNumber(
+                    selectedItem.minimumStock
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Stock Value
+                </div>
+
+                <div className="mt-2 text-lg font-semibold text-slate-900">
+                  {formatINR(
+                    stockValue
+                  )}
+                </div>
+
+                <div className="mt-1 text-xs text-slate-500">
+                  Current stock × purchase price
+                </div>
+              </div>
+            </div>
+
+            {/* =================================================
+                DETAILS
+            ================================================= */}
+
+            <section className="rounded-lg border border-slate-200">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Item Details
+                </h3>
+              </div>
+
+              <div className="grid grid-cols-1 gap-x-8 gap-y-5 p-5 sm:grid-cols-2 xl:grid-cols-4">
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Item Code
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.sku ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Barcode
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.barcode ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    IMEI
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.imei ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    HSN / SAC
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.hsnSac ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Category
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem
+                      .category?.name ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Brand
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem
+                      .brand?.name ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Unit
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.unit
+                      ?.shortName ||
+                      selectedItem.unit
+                        ?.name ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Supplier
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem
+                      .supplier?.name ||
+                      "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    GST Rate
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {toNumber(
+                      selectedItem.gstRate
+                    )}
+                    %
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    MRP
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.mrp !=
+                    null
+                      ? formatINR(
+                          toNumber(
+                            selectedItem.mrp
+                          )
+                        )
+                      : "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Opening Stock
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {toNumber(
+                      selectedItem.openingStock
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Default Discount
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {toNumber(
+                      selectedItem.discountPercent
+                    )}
+                    %
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Batch Tracking
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.trackBatch
+                      ? "Enabled"
+                      : "Disabled"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    IMEI / Serial Tracking
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.trackSerial
+                      ? "Enabled"
+                      : "Disabled"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Expiry Tracking
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.trackExpiry
+                      ? "Enabled"
+                      : "Disabled"}
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2 xl:col-span-1">
+                  <div className="text-xs text-slate-500">
+                    Status
+                  </div>
+
+                  <div className="mt-1">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                        selectedItem.status ===
+                        "ACTIVE"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {selectedItem.status ||
+                        "UNKNOWN"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {selectedItem.description && (
+                <div className="border-t border-slate-200 px-5 py-4">
+                  <div className="text-xs text-slate-500">
+                    Description
+                  </div>
+
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                    {
+                      selectedItem.description
+                    }
+                  </p>
+                </div>
+              )}
+            </section>
+
+            {/* =================================================
+                STOCK MOVEMENTS
+            ================================================= */}
+
+            <section className="mt-6">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Stock Transactions
+                  </h3>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    Inventory movement recorded by the backend.
+                  </p>
+                </div>
+
+                {detailLoading && (
+                  <RefreshCw className="h-4 w-4 animate-spin text-slate-400" />
+                )}
+              </div>
+
+              <div className="overflow-hidden rounded-lg border border-slate-200">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[850px] text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Type
+                        </th>
+
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Reference
+                        </th>
+
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Date
+                        </th>
+
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">
+                          Quantity
+                        </th>
+
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">
+                          Balance
+                        </th>
+
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Notes
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {movements.length ===
+                      0 ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-4 py-12 text-center"
+                          >
+                            <Package className="mx-auto h-8 w-8 text-slate-300" />
+
+                            <div className="mt-3 text-sm font-medium text-slate-700">
+                              No stock transactions
+                            </div>
+
+                            <div className="mt-1 text-xs text-slate-500">
+                              Transactions will appear here as stock changes.
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        movements.map(
+                          (movement) => {
+                            const quantity =
+                              movementQuantity(
+                                movement
+                              );
+
+                            const isIn =
+                              quantity >
+                              0;
+
+                            return (
+                              <tr
+                                key={
+                                  movement.id
+                                }
+                                className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50"
+                              >
+                                <td className="px-4 py-3">
+                                  <span className="font-medium text-slate-800">
+                                    {formatMovementType(
+                                      movement.type
+                                    )}
+                                  </span>
+                                </td>
+
+                                <td className="px-4 py-3 text-slate-600">
+                                  {movement.referenceType ||
+                                  movement.referenceId ? (
+                                    <div>
+                                      <div className="text-xs font-medium text-slate-700">
+                                        {movement.referenceType
+                                          ? formatMovementType(
+                                              movement.referenceType
+                                            )
+                                          : "Reference"}
+                                      </div>
+
+                                      {movement.referenceId && (
+                                        <div className="mt-0.5 font-mono text-[11px] text-slate-400">
+                                          {
+                                            movement.referenceId
+                                          }
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
+
+                                <td className="px-4 py-3 text-slate-600">
+                                  {formatDate(
+                                    movement.date
+                                  )}
+                                </td>
+
+                                <td className="px-4 py-3 text-right font-medium">
+                                  <span
+                                    className={
+                                      isIn
+                                        ? "text-emerald-600"
+                                        : quantity <
+                                          0
+                                        ? "text-red-600"
+                                        : "text-slate-700"
+                                    }
+                                  >
+                                    {isIn
+                                      ? "+"
+                                      : quantity <
+                                        0
+                                      ? ""
+                                      : ""}
+                                    {
+                                      quantity
+                                    }
+                                  </span>
+                                </td>
+
+                                <td className="px-4 py-3 text-right font-medium text-slate-800">
+                                  {toNumber(
+                                    movement.balance
+                                  )}
+                                </td>
+
+                                <td className="px-4 py-3 text-slate-600">
+                                  {movement.notes ||
+                                    "—"}
+                                </td>
+                              </tr>
+                            );
+                          }
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            {/* =================================================
+                FOOTER INFO
+            ================================================= */}
+
+            <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-400">
+              {selectedItem.createdAt && (
+                <span>
+                  Created:{" "}
+                  {formatDate(
+                    selectedItem.createdAt
+                  )}
+                </span>
+              )}
+
+              {selectedItem.updatedAt && (
+                <span>
+                  Last updated:{" "}
+                  {formatDate(
+                    selectedItem.updatedAt
+                  )}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
