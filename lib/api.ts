@@ -415,10 +415,43 @@ export const api = {
   cancelSale: (
     id: string,
   ) =>
-    request<
-      any
-    >(
-      `/sales/${id}/cancel`,
+    request<any>(
+      `/sales/${encodeURIComponent(id)}/cancel`,
+      {
+        method: "POST",
+      },
+    ),
+
+  /* =======================================================
+     PURCHASES
+  ======================================================= */
+
+  purchases: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<PaginatedResponse<any>>(
+      `/purchases${buildQuery(params)}`,
+    ),
+
+  purchase: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/purchases/${encodeURIComponent(id)}`,
+    ),
+
+  createPurchase: (
+    data: Record<string, any>,
+  ) =>
+    request<ApiSuccess<any>>(
+      "/purchases",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  cancelPurchase: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/purchases/${encodeURIComponent(id)}/cancel`,
       {
         method: "POST",
       },
