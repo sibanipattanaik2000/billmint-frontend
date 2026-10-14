@@ -94,8 +94,14 @@ export default function ExpensesPage() {
         search: search.trim() || undefined,
         categoryId: selectedCategory?.id,
       });
-
+console.log("[EXPENSES FRONTEND RESPONSE]", response);
       setExpenses(response.data ?? []);
+      console.log("[EXPENSES DISPLAY CHECK]", {
+  count: response.data?.length,
+  firstExpense: response.data?.[0],
+  activeCategory: filterCategory,
+  search,
+});
       setTotalExpense(Number(response.summary?.totalAmount ?? 0));
     } catch (err) {
       setError(
@@ -107,7 +113,14 @@ export default function ExpensesPage() {
       setLoading(false);
     }
   }, [categories, filterCategory, search]);
-
+useEffect(() => {
+  console.log("[EXPENSES STATE CHECK]", {
+    count: expenses.length,
+    expenses,
+    loading,
+    error,
+  });
+}, [expenses, loading, error]);
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);

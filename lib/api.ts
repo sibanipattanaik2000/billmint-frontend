@@ -426,6 +426,96 @@ export const api = {
     ),
 
   /* =======================================================
+     CASH & BANK
+  ======================================================= */
+
+  cashBankAccounts: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<
+      PaginatedResponse<any> & {
+        summary?: {
+          totalActiveBalance: number;
+        };
+      }
+    >(`/cash-bank${buildQuery(params)}`),
+
+  cashBankStatement: (
+    id: string,
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<
+      ApiSuccess<{
+        account: any;
+        statement: {
+          from: string | null;
+          to: string | null;
+          openingBalance: number | string;
+          closingBalance: number | string;
+          transactions: Array<{
+            id: string;
+            date: string;
+            type: string;
+            amount: number | string;
+            balance: number | string;
+            description: string | null;
+            referenceType: string | null;
+            referenceId: string | null;
+          }>;
+        };
+        pagination: PaginationResponse;
+      }>
+    >(
+      `/cash-bank/${encodeURIComponent(id)}/statement${buildQuery(params)}`,
+    ),
+
+  createBankAccount: (
+    data: {
+      name: string;
+      accountNumber?: string | null;
+      ifsc?: string | null;
+      bankName?: string | null;
+      branch?: string | null;
+      openingBalance: number;
+      isCash: boolean;
+    },
+  ) =>
+    request<ApiSuccess<any>>("/cash-bank", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  createPaymentIn: (
+    data: {
+      amount: number;
+      date: string;
+      paymentMethod: string;
+      bankAccountId: string;
+      reference?: string | null;
+      notes?: string | null;
+    },
+  ) =>
+    request<ApiSuccess<any>>("/payments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  createPaymentOut: (
+    data: {
+      amount: number;
+      date: string;
+      paymentMethod: string;
+      bankAccountId: string;
+      reference?: string | null;
+      notes?: string | null;
+    },
+  ) =>
+    request<ApiSuccess<any>>("/payments/out", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  /* =======================================================
      EXPENSES
   ======================================================= */
 

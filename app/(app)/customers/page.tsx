@@ -204,7 +204,7 @@ export default function CustomersPage() {
               onClick={() =>
                 router.push(
                   filterType === "Supplier"
-                    ? "/parties/new?type=Supplier"
+                    ? "/customers/new?type=Supplier"
                     : "/customers/new",
                 )
               }
