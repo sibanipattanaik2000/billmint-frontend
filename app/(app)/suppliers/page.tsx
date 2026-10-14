@@ -1,87 +1,166 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { api, formatINR } from "@/lib/api";
+
+interface Purchase {
+  id: string;
+  billNumber?: string | null;
+  date?: string | null;
+  status?: string | null;
+  grandTotal?: number | string | null;
+  paidAmount?: number | string | null;
+  balanceAmount?: number | string | null;
+}
 
 interface Supplier {
   id: string;
   name: string;
-  phone: string;
-  email?: string;
-  gstin?: string;
-  address?: string;
-  payable: number;
-  totalPurchase: number;
+  phone?: string | null;
+  email?: string | null;
+  gstin?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pinCode?: string | null;
+  currentBalance?: number | string | null;
+  openingBalance?: number | string | null;
+  payable?: number | string | null;
+  totalPurchase?: number | string | null;
+  purchases?: Purchase[];
 }
 
-const initialSuppliers: Supplier[] = [
-  {
-    id: "1",
-    name: "TECH SUPPLIERS PVT LTD",
-    phone: "0674-1234567",
-    email: "contact@techsuppliers.com",
-    gstin: "21AAAAA0000A1Z5",
-    address: "Industrial Area, Bhubaneswar",
-    payable: 125000,
-    totalPurchase: 410500,
-  },
-  {
-    id: "2",
-    name: "MOBILE WORLD DISTRIBUTORS",
-    phone: "9937001122",
-    email: "sales@mobileworld.in",
-    gstin: "21BBBBB1111B1Z5",
-    address: "Cuttack Road, Bhubaneswar",
-    payable: 87500,
-    totalPurchase: 243500,
-  },
-  {
-    id: "3",
-    name: "ODISHA ELECTRONICS",
-    phone: "9876504321",
-    address: "Saheed Nagar, Bhubaneswar",
-    payable: 0,
-    totalPurchase: 156000,
-  },
-  {
-    id: "4",
-    name: "SMART GADGETS WHOLESALE",
-    phone: "9090901234",
-    gstin: "21CCCCC2222C1Z5",
-    payable: 32000,
-    totalPurchase: 89000,
-  },
-];
+function amount(value: number | string | null | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function displayDate(value?: string | null): string {
+  if (!value) return "—";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
 
 export default function SuppliersPage() {
   const router = useRouter();
-  const [suppliers] = useState<Supplier[]>(initialSuppliers);
+
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [selectedSupplier, setSelectedSupplier] =
+    useState<Supplier | null>(null);
   const [search, setSearch] = useState("");
-  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(
-    initialSuppliers[0]
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [detailError, setDetailError] = useState("");
+
+  const loadSuppliers = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await api.suppliers({
+        page: 1,
+        limit: 100,
+        search: search.trim(),
+        status: "ACTIVE",
+      });
+
+      const records = Array.isArray(response.data)
+        ? (response.data as Supplier[])
+        : [];
+
+      setSuppliers(records);
+
+      setSelectedSupplier((current) => {
+        if (!current) return records[0] ?? null;
+
+        return records.find((item) => item.id === current.id) ?? null;
+      });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load suppliers.",
+      );
+      setSuppliers([]);
+      setSelectedSupplier(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [search]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      void loadSuppliers();
+    }, search.trim() ? 300 : 0);
+
+    return () => clearTimeout(timeout);
+  }, [loadSuppliers, search]);
+
+  const loadSupplierDetails = useCallback(async (id: string) => {
+    setDetailLoading(true);
+    setDetailError("");
+
+    try {
+      const response = await api.supplier(id);
+      const supplier = response.data as Supplier;
+
+      setSelectedSupplier((current) =>
+        current?.id === id ? { ...current, ...supplier } : current,
+      );
+    } catch (err) {
+      setDetailError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load supplier details.",
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedSupplier?.id) {
+      void loadSupplierDetails(selectedSupplier.id);
+    }
+  }, [selectedSupplier?.id, loadSupplierDetails]);
+
+  const totalPayable = suppliers.reduce(
+    (sum, supplier) => sum + amount(supplier.payable ?? supplier.currentBalance),
+    0,
   );
 
-  const filtered = suppliers.filter(
-    (s) =>
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.phone.includes(search)
+  const totalPurchase = suppliers.reduce(
+    (sum, supplier) => sum + amount(supplier.totalPurchase),
+    0,
   );
 
-  const totalPayable = suppliers.reduce((sum, s) => sum + s.payable, 0);
-  const totalPurchase = suppliers.reduce((sum, s) => sum + s.totalPurchase, 0);
+  const handleSelectSupplier = (supplier: Supplier) => {
+    setDetailError("");
+    setSelectedSupplier(supplier);
+  };
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-white">
+    <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-white">
       {/* Left Suppliers List */}
-      <div className="w-80 border-r flex flex-col">
+      <div className="flex w-full min-h-0 flex-col border-r md:w-80 md:shrink-0">
         {/* Header */}
-        <div className="p-4 border-b">
-          <div className="flex items-center justify-between mb-3">
+        <div className="border-b p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
             <h1 className="text-lg font-semibold">Suppliers</h1>
+
             <button
+              type="button"
               onClick={() => router.push("/parties/new?type=Supplier")}
-              className="bg-orange-500 hover:bg-orange-600 text-white text-sm px-3 py-1.5 rounded"
+              className="rounded bg-orange-500 px-3 py-1.5 text-sm text-white hover:bg-orange-600"
             >
               + Add Supplier
             </button>
@@ -89,154 +168,307 @@ export default function SuppliersPage() {
 
           <div className="relative">
             <input
-              type="text"
+              type="search"
               placeholder="Search suppliers..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full border rounded pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              onChange={(event) => setSearch(event.target.value)}
+              className="w-full rounded border py-1.5 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              aria-label="Search suppliers"
             />
-            <span className="absolute left-2.5 top-2 text-gray-400">🔍</span>
+
+            <span className="absolute left-2.5 top-2 text-gray-400">
+              🔍
+            </span>
           </div>
         </div>
 
         {/* Summary */}
-        <div className="px-4 py-3 border-b bg-gray-50 text-sm grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 border-b bg-gray-50 px-4 py-3 text-sm">
           <div>
-            <div className="text-gray-500 text-xs">Total Payable</div>
+            <div className="text-xs text-gray-500">Total Payable</div>
             <div className="font-semibold text-red-500">
-              ₹ {totalPayable.toLocaleString("en-IN")}
+              {formatINR(totalPayable)}
             </div>
           </div>
+
           <div>
-            <div className="text-gray-500 text-xs">Total Purchase</div>
+            <div className="text-xs text-gray-500">Total Purchase</div>
             <div className="font-semibold">
-              ₹ {totalPurchase.toLocaleString("en-IN")}
+              {formatINR(totalPurchase)}
             </div>
           </div>
         </div>
 
         {/* Suppliers List */}
-        <div className="flex-1 overflow-y-auto">
-          {filtered.map((supplier) => (
-            <div
-              key={supplier.id}
-              onClick={() => setSelectedSupplier(supplier)}
-              className={`px-4 py-3 border-b cursor-pointer hover:bg-blue-50 ${
-                selectedSupplier?.id === supplier.id ? "bg-blue-50" : ""
-              }`}
-            >
-              <div className="font-medium text-sm">{supplier.name}</div>
-              <div className="text-xs text-gray-500 mt-0.5">{supplier.phone}</div>
-
-              {supplier.payable > 0 && (
-                <div className="mt-1.5 text-xs text-red-500 font-medium">
-                  Pay: ₹ {supplier.payable.toLocaleString("en-IN")}
-                </div>
-              )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="p-8 text-center text-sm text-gray-500">
+              Loading suppliers...
             </div>
-          ))}
-
-          {filtered.length === 0 && (
-            <div className="p-8 text-center text-gray-400 text-sm">
-              No suppliers found
+          ) : error ? (
+            <div className="p-5 text-sm text-red-600">
+              <p>{error}</p>
+              <button
+                type="button"
+                onClick={() => void loadSuppliers()}
+                className="mt-3 rounded border px-3 py-1.5 hover:bg-gray-50"
+              >
+                Retry
+              </button>
             </div>
+          ) : suppliers.length === 0 ? (
+            <div className="p-8 text-center text-sm text-gray-400">
+              {search.trim()
+                ? "No suppliers match your search."
+                : "No suppliers found. Add your first supplier to get started."}
+            </div>
+          ) : (
+            suppliers.map((supplier) => {
+              const payable = amount(
+                supplier.payable ?? supplier.currentBalance,
+              );
+
+              return (
+                <button
+                  type="button"
+                  key={supplier.id}
+                  onClick={() => handleSelectSupplier(supplier)}
+                  className={`w-full border-b px-4 py-3 text-left transition-colors hover:bg-blue-50 ${
+                    selectedSupplier?.id === supplier.id
+                      ? "bg-blue-50"
+                      : ""
+                  }`}
+                >
+                  <div className="break-words text-sm font-medium">
+                    {supplier.name}
+                  </div>
+
+                  <div className="mt-0.5 text-xs text-gray-500">
+                    {supplier.phone || "No phone number"}
+                  </div>
+
+                  {payable > 0 && (
+                    <div className="mt-1.5 text-xs font-medium text-red-500">
+                      Pay: {formatINR(payable)}
+                    </div>
+                  )}
+                </button>
+              );
+            })
           )}
         </div>
       </div>
 
       {/* Right Detail Panel */}
-      <div className="flex-1 overflow-auto">
+      <div className="min-w-0 flex-1 overflow-auto">
         {selectedSupplier ? (
-          <div className="p-6">
+          <div className="p-4 sm:p-6">
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-xl font-semibold">{selectedSupplier.name}</h2>
-                <div className="text-sm text-gray-500 mt-1">
-                  Supplier • {selectedSupplier.phone}
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="break-words text-xl font-semibold">
+                  {selectedSupplier.name}
+                </h2>
+
+                <div className="mt-1 text-sm text-gray-500">
+                  Supplier • {selectedSupplier.phone || "No phone number"}
                 </div>
               </div>
-              <div className="flex gap-2">
+
+              <div className="flex flex-wrap gap-2">
                 <button
+                  type="button"
                   onClick={() =>
                     router.push(`/parties/${selectedSupplier.id}/edit`)
                   }
-                  className="border px-4 py-1.5 rounded text-sm hover:bg-gray-50"
+                  className="rounded border px-4 py-1.5 text-sm hover:bg-gray-50"
                 >
                   Edit
                 </button>
+
                 <button
+                  type="button"
                   onClick={() =>
                     router.push(
-                      `/purchases/new?supplier=${selectedSupplier.id}`
+                      `/purchases/new?supplier=${encodeURIComponent(
+                        selectedSupplier.id,
+                      )}`,
                     )
                   }
-                  className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-1.5 rounded text-sm"
+                  className="rounded bg-orange-500 px-4 py-1.5 text-sm text-white hover:bg-orange-600"
                 >
                   + Create Purchase
                 </button>
               </div>
             </div>
 
+            {detailError && (
+              <div
+                role="alert"
+                className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+              >
+                <span>{detailError}</span>
+                <button
+                  type="button"
+                  onClick={() => void loadSupplierDetails(selectedSupplier.id)}
+                  className="font-medium underline"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
             {/* Balance Cards */}
-            <div className="grid grid-cols-2 gap-4 mb-8">
-              <div className="bg-red-50 border border-red-100 rounded-lg p-4">
-                <div className="text-sm text-red-700 mb-1">To Pay</div>
+            <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-red-100 bg-red-50 p-4">
+                <div className="mb-1 text-sm text-red-700">To Pay</div>
                 <div className="text-2xl font-bold text-red-700">
-                  ₹ {selectedSupplier.payable.toLocaleString("en-IN")}
+                  {formatINR(
+                    selectedSupplier.payable ??
+                      selectedSupplier.currentBalance,
+                  )}
                 </div>
               </div>
-              <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
-                <div className="text-sm text-blue-700 mb-1">Total Purchase</div>
+
+              <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+                <div className="mb-1 text-sm text-blue-700">
+                  Total Purchase
+                </div>
                 <div className="text-2xl font-bold text-blue-700">
-                  ₹ {selectedSupplier.totalPurchase.toLocaleString("en-IN")}
+                  {formatINR(selectedSupplier.totalPurchase)}
                 </div>
               </div>
             </div>
 
-            {/* Details */}
-            <div className="space-y-4 text-sm mb-8">
-              <div className="grid grid-cols-2 gap-4">
+            {/* Supplier Details */}
+            <div className="mb-8 space-y-4 text-sm">
+              <h3 className="font-semibold">Supplier Details</h3>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <div className="text-gray-500">Phone</div>
-                  <div className="font-medium">{selectedSupplier.phone}</div>
-                </div>
-                {selectedSupplier.email && (
-                  <div>
-                    <div className="text-gray-500">Email</div>
-                    <div className="font-medium">{selectedSupplier.email}</div>
+                  <div className="break-words font-medium">
+                    {selectedSupplier.phone || "—"}
                   </div>
+                </div>
+
+                <div>
+                  <div className="text-gray-500">Email</div>
+                  <div className="break-words font-medium">
+                    {selectedSupplier.email || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-gray-500">GSTIN</div>
+                  <div className="break-words font-medium">
+                    {selectedSupplier.gstin || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-gray-500">Address</div>
+                  <div className="break-words font-medium">
+                    {[
+                      selectedSupplier.address,
+                      selectedSupplier.city,
+                      selectedSupplier.state,
+                      selectedSupplier.pinCode,
+                    ]
+                      .filter(Boolean)
+                      .join(", ") || "—"}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Recent Purchases */}
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="font-semibold">Recent Purchases</h3>
+
+                {detailLoading && (
+                  <span className="text-xs text-gray-500">
+                    Refreshing...
+                  </span>
                 )}
               </div>
 
-              {selectedSupplier.gstin && (
-                <div>
-                  <div className="text-gray-500">GSTIN</div>
-                  <div className="font-medium">{selectedSupplier.gstin}</div>
+              {detailLoading && !selectedSupplier.purchases ? (
+                <div className="rounded-lg border p-8 text-center text-sm text-gray-500">
+                  Loading purchase history...
+                </div>
+              ) : (selectedSupplier.purchases ?? []).length === 0 ? (
+                <div className="rounded-lg border p-8 text-center text-sm text-gray-400">
+                  No recent purchases to show
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border">
+                  <table className="w-full min-w-[650px] text-left text-sm">
+                    <thead className="bg-gray-50 text-xs text-gray-600">
+                      <tr>
+                        <th className="px-4 py-3 font-medium">Bill No.</th>
+                        <th className="px-4 py-3 font-medium">Date</th>
+                        <th className="px-4 py-3 font-medium">Status</th>
+                        <th className="px-4 py-3 text-right font-medium">
+                          Total
+                        </th>
+                        <th className="px-4 py-3 text-right font-medium">
+                          Paid
+                        </th>
+                        <th className="px-4 py-3 text-right font-medium">
+                          Balance
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y">
+                      {(selectedSupplier.purchases ?? []).map((purchase) => (
+                        <tr key={purchase.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 font-medium">
+                            {purchase.billNumber || "—"}
+                          </td>
+
+                          <td className="whitespace-nowrap px-4 py-3">
+                            {displayDate(purchase.date)}
+                          </td>
+
+                          <td className="px-4 py-3">
+                            <span className="rounded bg-gray-100 px-2 py-1 text-xs">
+                              {purchase.status || "—"}
+                            </span>
+                          </td>
+
+                          <td className="whitespace-nowrap px-4 py-3 text-right">
+                            {formatINR(purchase.grandTotal)}
+                          </td>
+
+                          <td className="whitespace-nowrap px-4 py-3 text-right">
+                            {formatINR(purchase.paidAmount)}
+                          </td>
+
+                          <td className="whitespace-nowrap px-4 py-3 text-right">
+                            {formatINR(purchase.balanceAmount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
-
-              {selectedSupplier.address && (
-                <div>
-                  <div className="text-gray-500">Address</div>
-                  <div className="font-medium">{selectedSupplier.address}</div>
-                </div>
-              )}
-            </div>
-
-            {/* Recent Purchases Placeholder */}
-            <div>
-              <h3 className="font-medium mb-3">Recent Purchases</h3>
-              <div className="border rounded-lg p-8 text-center text-gray-400 text-sm">
-                No recent purchases to show
-              </div>
             </div>
           </div>
         ) : (
-          <div className="h-full flex items-center justify-center text-gray-400">
+          <div className="flex h-full min-h-64 items-center justify-center p-6 text-gray-400">
             <div className="text-center">
-              <div className="text-4xl mb-3">🏭</div>
-              <p>Select a supplier to view details</p>
+              <div className="mb-3 text-4xl">🏭</div>
+              <p>
+                {loading
+                  ? "Loading suppliers..."
+                  : error
+                    ? "Unable to load supplier details."
+                    : "Select a supplier to view details"}
+              </p>
             </div>
           </div>
         )}

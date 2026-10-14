@@ -1,261 +1,348 @@
+
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { api, formatINR } from "@/lib/api";
+
+interface ExpenseCategory {
+  id: string;
+  name: string;
+  isSystem?: boolean;
+}
 
 interface Expense {
   id: string;
   date: string;
-  expenseNo: string;
-  category: string;
-  description: string;
-  paymentType: string;
-  amount: number;
+  categoryId: string | null;
+  category: { id: string; name: string } | null;
+  description: string | null;
+  paymentMethod: string | null;
+  amount: number | string;
+  notes?: string | null;
 }
 
-const initialExpenses: Expense[] = [
-  {
-    id: "1",
-    date: "19/09/2026",
-    expenseNo: "EXP-001",
-    category: "Rent",
-    description: "Shop Rent - September",
-    paymentType: "BANK",
-    amount: 15000,
-  },
-  {
-    id: "2",
-    date: "18/09/2026",
-    expenseNo: "EXP-002",
-    category: "Electricity",
-    description: "Electricity Bill",
-    paymentType: "UPI",
-    amount: 4200,
-  },
-  {
-    id: "3",
-    date: "17/09/2026",
-    expenseNo: "EXP-003",
-    category: "Salary",
-    description: "Staff Salary - September",
-    paymentType: "BANK",
-    amount: 45000,
-  },
-  {
-    id: "4",
-    date: "16/09/2026",
-    expenseNo: "EXP-004",
-    category: "Transport",
-    description: "Delivery charges",
-    paymentType: "CASH",
-    amount: 1800,
-  },
-  {
-    id: "5",
-    date: "15/09/2026",
-    expenseNo: "EXP-005",
-    category: "Office Supplies",
-    description: "Stationery & packing material",
-    paymentType: "CASH",
-    amount: 2500,
-  },
-];
+function formatDate(value: string) {
+  const date = new Date(value);
 
-const categories = [
-  "Rent",
-  "Electricity",
-  "Salary",
-  "Transport",
-  "Office Supplies",
-  "Marketing",
-  "Maintenance",
-  "Internet",
-  "Miscellaneous",
-];
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
 
 export default function ExpensesPage() {
-  const router = useRouter();
-  const [expenses, setExpenses] = useState<Expense[]>(initialExpenses);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("All");
 
-  // Form states
   const [showForm, setShowForm] = useState(false);
-  const [category, setCategory] = useState("Rent");
+  const [categoryId, setCategoryId] = useState("");
+  const [categoryName, setCategoryName] = useState("Rent");
   const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState<number>(0);
+  const [amount, setAmount] = useState("");
   const [paymentType, setPaymentType] = useState("CASH");
-  const [expenseDate] = useState(new Date().toLocaleDateString("en-GB"));
+  const [expenseDate, setExpenseDate] = useState(
+    new Date().toLocaleDateString("en-CA"),
+  );
 
-  const filtered = expenses.filter((exp) => {
-    const matchesSearch =
-      exp.description.toLowerCase().includes(search.toLowerCase()) ||
-      exp.expenseNo.toLowerCase().includes(search.toLowerCase()) ||
-      exp.category.toLowerCase().includes(search.toLowerCase());
-    const matchesCategory =
-      filterCategory === "All" || exp.category === filterCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const [totalExpense, setTotalExpense] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-  const totalExpense = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+  const loadCategories = useCallback(async () => {
+    try {
+      const response = await api.expenseCategories();
+      const records = response.data ?? [];
 
-  const handleSave = () => {
-    if (!description.trim()) {
-      alert("Please enter description");
-      return;
+      setCategories(records);
+
+      if (records.length) {
+        setCategoryId((current) =>
+          records.some((item) => item.id === current)
+            ? current
+            : records[0].id,
+        );
+        setCategoryName(records[0].name);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load expense categories.",
+      );
     }
-    if (amount <= 0) {
-      alert("Please enter a valid amount");
-      return;
+  }, []);
+
+  const loadExpenses = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const selectedCategory = categories.find(
+        (item) => item.name === filterCategory,
+      );
+
+      const response = await api.expenses({
+        page: 1,
+        limit: 100,
+        search: search.trim() || undefined,
+        categoryId: selectedCategory?.id,
+      });
+
+      setExpenses(response.data ?? []);
+      setTotalExpense(Number(response.summary?.totalAmount ?? 0));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load expenses.",
+      );
+    } finally {
+      setLoading(false);
     }
+  }, [categories, filterCategory, search]);
 
-    const newExpense: Expense = {
-      id: Date.now().toString(),
-      date: expenseDate,
-      expenseNo: `EXP-${String(expenses.length + 1).padStart(3, "0")}`,
-      category,
-      description,
-      paymentType,
-      amount,
-    };
+  useEffect(() => {
+    void loadCategories();
+  }, [loadCategories]);
 
-    setExpenses([newExpense, ...expenses]);
-    alert("Expense recorded successfully!");
-    setShowForm(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadExpenses();
+    }, 250);
 
-    // Reset
-    setCategory("Rent");
-    setDescription("");
-    setAmount(0);
-    setPaymentType("CASH");
+    return () => window.clearTimeout(timer);
+  }, [loadExpenses]);
+
+  const handleCategoryChange = (name: string) => {
+    setCategoryName(name);
+    setCategoryId(
+      categories.find((item) => item.name === name)?.id ?? "",
+    );
   };
 
+  const handleSave = async () => {
+    setNotice("");
+    setError("");
+
+    const parsedAmount = Number(amount);
+
+    if (!description.trim()) {
+      setError("Please enter an expense description.");
+      return;
+    }
+
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setError("Please enter a valid amount greater than zero.");
+      return;
+    }
+
+    if (!expenseDate || Number.isNaN(new Date(expenseDate).getTime())) {
+      setError("Please select a valid expense date.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await api.createExpense({
+        amount: parsedAmount,
+        date: new Date(`${expenseDate}T12:00:00`).toISOString(),
+        categoryId: categoryId || null,
+        category: categoryName.trim() || null,
+        description: description.trim(),
+        paymentMethod: paymentType,
+      });
+
+      setShowForm(false);
+      setDescription("");
+      setAmount("");
+      setPaymentType("CASH");
+      setNotice("Expense recorded successfully.");
+
+      await loadExpenses();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save the expense.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const displayedExpenses = expenses;
+
   return (
-    <div className="flex-1 flex flex-col bg-white overflow-hidden">
-      {/* Header */}
-      <div className="px-6 py-4 border-b flex items-center justify-between">
+    <div className="flex flex-1 flex-col overflow-hidden bg-white">
+      <div className="flex items-center justify-between border-b px-6 py-4">
         <h1 className="text-xl font-semibold text-gray-800">Expenses</h1>
+
         <button
-          onClick={() => setShowForm(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-md text-sm font-medium"
+          onClick={() => {
+            setError("");
+            setNotice("");
+            setShowForm(true);
+          }}
+          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           + Add Expense
         </button>
       </div>
 
-      {/* Summary */}
-      <div className="px-6 py-4 border-b bg-gray-50">
+      <div className="border-b bg-gray-50 px-6 py-4">
         <div className="text-sm text-gray-500">Total Expenses</div>
         <div className="text-2xl font-bold text-red-500">
-          ₹ {totalExpense.toLocaleString("en-IN")}
+          {formatINR(totalExpense)}
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="px-6 py-3 border-b flex items-center justify-between">
+      <div className="flex flex-col justify-between gap-3 border-b px-6 py-3 lg:flex-row lg:items-center">
         <div className="flex gap-2 overflow-x-auto">
-          <button
-            onClick={() => setFilterCategory("All")}
-            className={`px-3 py-1.5 rounded text-sm whitespace-nowrap ${
-              filterCategory === "All"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            All
-          </button>
-          {categories.map((cat) => (
+          {["All", ...categories.map((item) => item.name)].map((name) => (
             <button
-              key={cat}
-              onClick={() => setFilterCategory(cat)}
-              className={`px-3 py-1.5 rounded text-sm whitespace-nowrap ${
-                filterCategory === cat
+              key={name}
+              onClick={() => setFilterCategory(name)}
+              className={`whitespace-nowrap rounded px-3 py-1.5 text-sm ${
+                filterCategory === name
                   ? "bg-blue-600 text-white"
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200"
               }`}
             >
-              {cat}
+              {name}
             </button>
           ))}
         </div>
 
         <input
-          type="text"
+          type="search"
           placeholder="Search expenses..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="border rounded px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          onChange={(event) => setSearch(event.target.value)}
+          className="w-full rounded border px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 lg:w-64"
         />
       </div>
 
-      {/* Table */}
       <div className="flex-1 overflow-auto px-6 py-4">
+        {error && !showForm && (
+          <div
+            role="alert"
+            className="mb-4 flex items-center justify-between rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+          >
+            <span>{error}</span>
+            <button
+              onClick={() => void loadExpenses()}
+              className="font-medium underline"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {notice && (
+          <div className="mb-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+            {notice}
+          </div>
+        )}
+
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-gray-500">
               <th className="py-2 pr-3">Date</th>
-              <th className="py-2 pr-3">Expense No</th>
+              <th className="py-2 pr-3">Expense ID</th>
               <th className="py-2 pr-3">Category</th>
               <th className="py-2 pr-3">Description</th>
               <th className="py-2 pr-3">Payment Type</th>
               <th className="py-2 text-right">Amount</th>
             </tr>
           </thead>
+
           <tbody>
-            {filtered.map((exp) => (
-              <tr key={exp.id} className="border-b hover:bg-gray-50">
-                <td className="py-3">{exp.date}</td>
-                <td className="py-3 font-medium">{exp.expenseNo}</td>
+            {displayedExpenses.map((expense) => (
+              <tr key={expense.id} className="border-b hover:bg-gray-50">
+                <td className="py-3">{formatDate(expense.date)}</td>
+                <td className="py-3 font-medium" title={expense.id}>
+                  {expense.id.slice(0, 8).toUpperCase()}
+                </td>
                 <td className="py-3">
-                  <span className="bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded">
-                    {exp.category}
+                  <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700">
+                    {expense.category?.name ?? "Uncategorized"}
                   </span>
                 </td>
-                <td className="py-3">{exp.description}</td>
-                <td className="py-3">{exp.paymentType}</td>
+                <td className="py-3">{expense.description || "—"}</td>
+                <td className="py-3">{expense.paymentMethod || "—"}</td>
                 <td className="py-3 text-right font-medium text-red-500">
-                  ₹ {exp.amount.toLocaleString("en-IN")}
+                  {formatINR(Number(expense.amount))}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
 
-        {filtered.length === 0 && (
+        {!loading && !error && displayedExpenses.length === 0 && (
           <div className="py-16 text-center text-gray-400">
             No expenses found
           </div>
         )}
+
+        {loading && (
+          <div className="py-12 text-center text-sm text-gray-500">
+            Loading expenses...
+          </div>
+        )}
+
+        {!loading && !error && displayedExpenses.length > 0 && (
+          <p className="mt-4 text-xs text-gray-500">
+            Showing up to 100 matching expenses.
+          </p>
+        )}
       </div>
 
-      {/* ========== ADD EXPENSE MODAL ========== */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
-            <div className="flex items-center justify-between px-6 py-4 border-b">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
               <h2 className="text-lg font-semibold">Add Expense</h2>
               <button
                 onClick={() => setShowForm(false)}
-                className="text-2xl text-gray-500 hover:text-gray-700"
+                disabled={saving}
+                aria-label="Close"
+                className="text-2xl text-gray-500 hover:text-gray-700 disabled:opacity-50"
               >
                 ×
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="space-y-4 p-6">
               <div>
                 <label className="text-sm text-gray-600">Category</label>
                 <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={categoryName}
+                  onChange={(event) => handleCategoryChange(event.target.value)}
+                  className="mt-1 w-full rounded-md border px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
+                  {categories.length === 0 && (
+                    <option value="Rent">Rent</option>
+                  )}
+                  {categories.map((item) => (
+                    <option key={item.id} value={item.name}>
+                      {item.name}
                     </option>
                   ))}
                 </select>
+                {categories.length === 0 && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    No saved categories found. The category will be created
+                    when the expense is saved.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -264,10 +351,11 @@ export default function ExpensesPage() {
                 </label>
                 <input
                   type="text"
+                  maxLength={1000}
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onChange={(event) => setDescription(event.target.value)}
                   placeholder="What is this expense for?"
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="mt-1 w-full rounded-md border px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 
@@ -278,45 +366,65 @@ export default function ExpensesPage() {
                   </label>
                   <input
                     type="number"
-                    value={amount || ""}
-                    onChange={(e) => setAmount(Number(e.target.value))}
-                    placeholder="0"
-                    className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    min="0.01"
+                    step="0.01"
+                    value={amount}
+                    onChange={(event) => setAmount(event.target.value)}
+                    placeholder="0.00"
+                    className="mt-1 w-full rounded-md border px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
+
                 <div>
                   <label className="text-sm text-gray-600">Payment Type</label>
                   <select
                     value={paymentType}
-                    onChange={(e) => setPaymentType(e.target.value)}
-                    className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    onChange={(event) => setPaymentType(event.target.value)}
+                    className="mt-1 w-full rounded-md border px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    <option>CASH</option>
-                    <option>BANK</option>
-                    <option>UPI</option>
-                    <option>CARD</option>
-                    <option>OTHERS</option>
+                    <option value="CASH">CASH</option>
+                    <option value="BANK">BANK</option>
+                    <option value="UPI">UPI</option>
+                    <option value="CARD">CARD</option>
+                    <option value="OTHERS">OTHERS</option>
                   </select>
                 </div>
               </div>
 
-              <div className="text-sm text-gray-500">
-                Date: <span className="font-medium">{expenseDate}</span>
+              <div>
+                <label className="text-sm text-gray-600">Expense Date</label>
+                <input
+                  type="date"
+                  value={expenseDate}
+                  onChange={(event) => setExpenseDate(event.target.value)}
+                  className="mt-1 w-full rounded-md border px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
               </div>
+
+              {error && (
+                <div
+                  role="alert"
+                  className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                >
+                  {error}
+                </div>
+              )}
             </div>
 
-            <div className="px-6 py-4 border-t flex justify-end gap-3 bg-gray-50 rounded-b-xl">
+            <div className="flex justify-end gap-3 rounded-b-xl border-t bg-gray-50 px-6 py-4">
               <button
                 onClick={() => setShowForm(false)}
-                className="border px-5 py-2 rounded-md text-sm hover:bg-gray-100"
+                disabled={saving}
+                className="rounded-md border px-5 py-2 text-sm hover:bg-gray-100 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
-                onClick={handleSave}
-                className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-md text-sm font-medium"
+                onClick={() => void handleSave()}
+                disabled={saving}
+                className="rounded-md bg-red-500 px-6 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Save Expense
+                {saving ? "Saving..." : "Save Expense"}
               </button>
             </div>
           </div>

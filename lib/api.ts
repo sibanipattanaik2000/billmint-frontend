@@ -274,6 +274,52 @@ export const api = {
     ),
 
   /* =======================================================
+     SUPPLIERS
+  ======================================================= */
+
+  suppliers: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<PaginatedResponse<any>>(
+      `/suppliers${buildQuery(params)}`,
+    ),
+
+  supplier: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/suppliers/${encodeURIComponent(id)}`,
+    ),
+
+  createSupplier: (
+    data: Record<string, any>,
+  ) =>
+    request<ApiSuccess<any>>(
+      "/suppliers",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  updateSupplier: (
+    id: string,
+    data: Record<string, any>,
+  ) =>
+    request<ApiSuccess<any>>(
+      `/suppliers/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  deleteSupplier: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/suppliers/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+      },
+    ),
+  /* =======================================================
      ITEMS
   ======================================================= */
 
@@ -380,6 +426,65 @@ export const api = {
     ),
 
   /* =======================================================
+     EXPENSES
+  ======================================================= */
+
+  expenses: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<
+      PaginatedResponse<any> & {
+        summary?: {
+          totalAmount: number;
+          count: number;
+        };
+      }
+    >(
+      `/expenses${buildQuery(params)}`,
+    ),
+
+  expenseCategories: () =>
+    request<ApiSuccess<any[]>>(
+      "/expenses/categories",
+    ),
+
+  expense: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/expenses/${encodeURIComponent(id)}`,
+    ),
+
+  createExpense: (
+    data: Record<string, any>,
+  ) =>
+    request<ApiSuccess<any>>(
+      "/expenses",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  updateExpense: (
+    id: string,
+    data: Record<string, any>,
+  ) =>
+    request<ApiSuccess<any>>(
+      `/expenses/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  deleteExpense: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/expenses/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+      },
+    ),
+
+  /* =======================================================
      SALES
   ======================================================= */
 
@@ -457,6 +562,7 @@ export const api = {
       },
     ),
 };
+
 
 /* =========================================================
    FORMATTING
