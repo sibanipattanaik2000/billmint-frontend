@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { api, formatINR } from '@/lib/api';
+import { useCallback, useEffect, useState } from 'react';
+import { api, ApiError, formatINR } from '@/lib/api';
 import {
   TrendingUp,
   ShoppingCart,
@@ -11,74 +11,232 @@ import {
   AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,
+  RefreshCw,
 } from 'lucide-react';
 import Link from 'next/link';
 
+interface DashboardData {
+  cards: {
+    todaySale: number;
+    todaySaleCount: number;
+    todayPurchase: number;
+    todayPurchaseCount: number;
+    todayExpense?: number;
+    monthProfit?: number;
+    monthExpense?: number;
+    receivables: number;
+    payables: number;
+    cashBalance: number;
+    bankBalance: number;
+    stockValue: number;
+  };
+  recentSales: any[];
+  recentPurchases: any[];
+  lowStock: any[];
+  outstandingPayments: any[];
+  topCustomers: any[];
+  salesTrend: any[];
+}
+
 export default function DashboardPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    api
-      .dashboard()
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err.message || 'Failed to load dashboard'))
-      .finally(() => setLoading(false));
+  const loadDashboard = useCallback(async (showLoader = true) => {
+    if (showLoader) setLoading(true);
+    setError('');
+
+    try {
+      const response = await api.dashboard();
+
+      if (!response?.data?.cards) {
+        throw new Error('The dashboard response is incomplete.');
+      }
+
+      setData(response.data as DashboardData);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Unable to load dashboard data.',
+      );
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  if (loading) {
+  useEffect(() => {
+    void loadDashboard();
+
+  }, [loadDashboard]);
+
+  if (loading && !data) {
     return (
       <div className="space-y-6 animate-pulse">
         <div className="h-8 w-48 bg-slate-200 rounded" />
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[...Array(8)].map((_, i) => (
             <div key={i} className="card h-24" />
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="card h-64" />
           ))}
         </div>
       </div>
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3">
-        {error}
+      <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-4">
+        <p className="font-medium">Unable to load dashboard</p>
+        <p className="text-sm mt-1">{error}</p>
+
+        <button
+          type="button"
+          onClick={() => void loadDashboard()}
+          disabled={loading}
+          className="mt-3 inline-flex items-center gap-2 rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-medium hover:bg-red-100 disabled:opacity-50"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Retry
+        </button>
       </div>
     );
   }
 
-  const c = data?.cards || {};
+  const c = data?.cards;
 
   const cards = [
-    { label: "Today's Sale", value: c.todaySale, sub: `${c.todaySaleCount || 0} invoices`, icon: TrendingUp, color: 'text-emerald-600 bg-emerald-50' },
-    { label: "Today's Purchase", value: c.todayPurchase, sub: `${c.todayPurchaseCount || 0} bills`, icon: ShoppingCart, color: 'text-blue-600 bg-blue-50' },
-    { label: 'Receivables', value: c.receivables, sub: 'Outstanding', icon: ArrowUpRight, color: 'text-amber-600 bg-amber-50' },
-    { label: 'Payables', value: c.payables, sub: 'To pay', icon: ArrowDownRight, color: 'text-rose-600 bg-rose-50' },
-    { label: 'Cash Balance', value: c.cashBalance, sub: 'In hand', icon: Wallet, color: 'text-violet-600 bg-violet-50' },
-    { label: 'Bank Balance', value: c.bankBalance, sub: 'Accounts', icon: Wallet, color: 'text-indigo-600 bg-indigo-50' },
-    { label: 'Stock Value', value: c.stockValue, sub: 'At cost', icon: Package, color: 'text-cyan-600 bg-cyan-50' },
-    { label: 'Month Profit', value: c.monthProfit, sub: 'Approx.', icon: TrendingUp, color: 'text-emerald-600 bg-emerald-50' },
+    {
+      label: "Today's Sale",
+      value: c?.todaySale,
+      sub: `${c?.todaySaleCount ?? 0} invoices`,
+      icon: TrendingUp,
+      color: 'text-emerald-600 bg-emerald-50',
+    },
+    {
+      label: "Today's Purchase",
+      value: c?.todayPurchase,
+      sub: `${c?.todayPurchaseCount ?? 0} bills`,
+      icon: ShoppingCart,
+      color: 'text-blue-600 bg-blue-50',
+    },
+    {
+      label: 'Receivables',
+      value: c?.receivables,
+      sub: 'Outstanding',
+      icon: ArrowUpRight,
+      color: 'text-amber-600 bg-amber-50',
+    },
+    {
+      label: 'Payables',
+      value: c?.payables,
+      sub: 'To pay',
+      icon: ArrowDownRight,
+      color: 'text-rose-600 bg-rose-50',
+    },
+    {
+      label: 'Cash Balance',
+      value: c?.cashBalance,
+      sub: 'In hand',
+      icon: Wallet,
+      color: 'text-violet-600 bg-violet-50',
+    },
+    {
+      label: 'Bank Balance',
+      value: c?.bankBalance,
+      sub: 'Accounts',
+      icon: Wallet,
+      color: 'text-indigo-600 bg-indigo-50',
+    },
+    {
+      label: 'Stock Value',
+      value: c?.stockValue,
+      sub: 'At cost',
+      icon: Package,
+      color: 'text-cyan-600 bg-cyan-50',
+    },
+    {
+      label: 'Month Profit',
+      value: c?.monthProfit,
+      sub: 'Approx.',
+      icon: TrendingUp,
+      color: 'text-emerald-600 bg-emerald-50',
+    },
   ];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500">Business overview for today</p>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">
+            Dashboard
+          </h1>
+          <p className="text-sm text-slate-500">
+            Business overview for today
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void loadDashboard()}
+          disabled={loading}
+          title="Refresh dashboard"
+          aria-label="Refresh dashboard"
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+        >
+          <RefreshCw
+            className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+          />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
       </div>
 
-      {/* Cards */}
+      {error && data && (
+        <div
+          role="alert"
+          className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 text-sm"
+        >
+          Refresh failed: {error}. Showing the last successfully loaded data.
+          <button
+            type="button"
+            onClick={() => void loadDashboard()}
+            className="ml-2 font-semibold underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Summary cards — original layout preserved */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {cards.map((card) => (
           <div key={card.label} className="card p-4">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{card.label}</p>
-                <p className="text-xl font-bold text-slate-900 mt-1">{formatINR(card.value)}</p>
-                <p className="text-xs text-slate-400 mt-0.5">{card.sub}</p>
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                  {card.label}
+                </p>
+                <p className="text-xl font-bold text-slate-900 mt-1">
+                  {formatINR(card.value)}
+                </p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {card.sub}
+                </p>
               </div>
-              <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${card.color}`}>
+
+              <div
+                className={`w-9 h-9 rounded-lg flex items-center justify-center ${card.color}`}
+              >
                 <card.icon className="w-4.5 h-4.5" />
               </div>
             </div>
@@ -86,30 +244,58 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      {/* Dashboard panels — original layout preserved */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Sales */}
         <div className="card">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-            <h2 className="font-semibold text-slate-900">Recent Sales</h2>
-            <Link href="/sales" className="text-sm text-brand-600 hover:underline">View all</Link>
+            <h2 className="font-semibold text-slate-900">
+              Recent Sales
+            </h2>
+            <Link
+              href="/sales"
+              className="text-sm text-brand-600 hover:underline"
+            >
+              View all
+            </Link>
           </div>
+
           <div className="divide-y divide-slate-50">
-            {(data?.recentSales || []).length === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-400 text-center">No sales yet</p>
+            {(data?.recentSales ?? []).length === 0 ? (
+              <p className="px-4 py-6 text-sm text-slate-400 text-center">
+                No sales yet
+              </p>
             ) : (
-              data.recentSales.map((s: any) => (
-                <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+              data!.recentSales.map((s) => (
+                <Link
+                  key={s.id}
+                  href={`/sales/${s.id}`}
+                  className="flex items-center justify-between px-4 py-3 hover:bg-slate-50"
+                >
                   <div>
-                    <p className="text-sm font-medium text-slate-900">{s.invoiceNumber}</p>
-                    <p className="text-xs text-slate-500">{s.customer?.name || 'Walk-in'}</p>
+                    <p className="text-sm font-medium text-slate-900">
+                      {s.invoiceNumber}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {s.customer?.name || 'Walk-in'}
+                    </p>
                   </div>
+
                   <div className="text-right">
-                    <p className="text-sm font-semibold">{formatINR(s.grandTotal)}</p>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      s.status === 'PAID' ? 'bg-emerald-50 text-emerald-700' :
-                      s.status === 'PARTIALLY_PAID' ? 'bg-amber-50 text-amber-700' :
-                      'bg-slate-100 text-slate-600'
-                    }`}>{s.status}</span>
+                    <p className="text-sm font-semibold">
+                      {formatINR(s.grandTotal)}
+                    </p>
+                    <span
+                      className={`text-xs px-1.5 py-0.5 rounded ${
+                        s.status === 'PAID'
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : s.status === 'PARTIALLY_PAID'
+                            ? 'bg-amber-50 text-amber-700'
+                            : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {String(s.status ?? '').replaceAll('_', ' ')}
+                    </span>
                   </div>
                 </Link>
               ))
@@ -124,18 +310,34 @@ export default function DashboardPage() {
               <AlertTriangle className="w-4 h-4 text-amber-500" />
               Low Stock
             </h2>
-            <Link href="/items/stock" className="text-sm text-brand-600 hover:underline">View all</Link>
+            <Link
+              href="/items/stock"
+              className="text-sm text-brand-600 hover:underline"
+            >
+              View all
+            </Link>
           </div>
+
           <div className="divide-y divide-slate-50">
-            {(data?.lowStock || []).length === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-400 text-center">All stock levels healthy</p>
+            {(data?.lowStock ?? []).length === 0 ? (
+              <p className="px-4 py-6 text-sm text-slate-400 text-center">
+                All stock levels healthy
+              </p>
             ) : (
-              data.lowStock.map((item: any) => (
-                <div key={item.id} className="flex items-center justify-between px-4 py-3">
+              data!.lowStock.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between px-4 py-3"
+                >
                   <div>
-                    <p className="text-sm font-medium text-slate-900">{item.name}</p>
-                    <p className="text-xs text-slate-500">Min: {Number(item.minimumStock)}</p>
+                    <p className="text-sm font-medium text-slate-900">
+                      {item.name}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Min: {Number(item.minimumStock)}
+                    </p>
                   </div>
+
                   <p className="text-sm font-semibold text-amber-600">
                     {Number(item.currentStock)} {item.unit?.shortName || ''}
                   </p>
@@ -145,23 +347,43 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Outstanding */}
+        {/* Outstanding Payments */}
         <div className="card">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-            <h2 className="font-semibold text-slate-900">Outstanding Payments</h2>
-            <Link href="/reports/parties" className="text-sm text-brand-600 hover:underline">View all</Link>
+            <h2 className="font-semibold text-slate-900">
+              Outstanding Payments
+            </h2>
+            <Link
+              href="/reports/parties"
+              className="text-sm text-brand-600 hover:underline"
+            >
+              View all
+            </Link>
           </div>
+
           <div className="divide-y divide-slate-50">
-            {(data?.outstandingPayments || []).length === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-400 text-center">No outstanding amounts</p>
+            {(data?.outstandingPayments ?? []).length === 0 ? (
+              <p className="px-4 py-6 text-sm text-slate-400 text-center">
+                No outstanding amounts
+              </p>
             ) : (
-              data.outstandingPayments.map((s: any) => (
-                <div key={s.id} className="flex items-center justify-between px-4 py-3">
+              data!.outstandingPayments.map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-center justify-between px-4 py-3"
+                >
                   <div>
-                    <p className="text-sm font-medium text-slate-900">{s.invoiceNumber}</p>
-                    <p className="text-xs text-slate-500">{s.customer?.name}</p>
+                    <p className="text-sm font-medium text-slate-900">
+                      {s.invoiceNumber}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {s.customer?.name || 'Walk-in'}
+                    </p>
                   </div>
-                  <p className="text-sm font-semibold text-rose-600">{formatINR(s.balanceAmount)}</p>
+
+                  <p className="text-sm font-semibold text-rose-600">
+                    {formatINR(s.balanceAmount)}
+                  </p>
                 </div>
               ))
             )}
@@ -175,16 +397,32 @@ export default function DashboardPage() {
               <Users className="w-4 h-4" />
               Top Customers
             </h2>
-            <Link href="/customers" className="text-sm text-brand-600 hover:underline">View all</Link>
+            <Link
+              href="/customers"
+              className="text-sm text-brand-600 hover:underline"
+            >
+              View all
+            </Link>
           </div>
+
           <div className="divide-y divide-slate-50">
-            {(data?.topCustomers || []).length === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-400 text-center">No customers yet</p>
+            {(data?.topCustomers ?? []).length === 0 ? (
+              <p className="px-4 py-6 text-sm text-slate-400 text-center">
+                No customers yet
+              </p>
             ) : (
-              data.topCustomers.map((c: any) => (
-                <Link key={c.id} href={`/customers/${c.id}`} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
-                  <p className="text-sm font-medium text-slate-900">{c.name}</p>
-                  <p className="text-sm font-semibold">{formatINR(c.currentBalance)}</p>
+              data!.topCustomers.map((customer) => (
+                <Link
+                  key={customer.id}
+                  href={`/customers/${customer.id}`}
+                  className="flex items-center justify-between px-4 py-3 hover:bg-slate-50"
+                >
+                  <p className="text-sm font-medium text-slate-900">
+                    {customer.name}
+                  </p>
+                  <p className="text-sm font-semibold">
+                    {formatINR(customer.currentBalance)}
+                  </p>
                 </Link>
               ))
             )}

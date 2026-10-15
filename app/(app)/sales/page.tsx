@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   FileSpreadsheet,
   FileText,
   MoreVertical,
   Printer,
+  RefreshCw,
   Search,
   Share2,
   Upload,
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { api, ApiError } from "@/lib/api";
 
 interface SaleInvoice {
   id: string;
@@ -22,118 +24,65 @@ interface SaleInvoice {
   paymentType: string;
   amount: number;
   balance: number;
-  status: "Paid" | "Unpaid";
+  status: string;
 }
 
-const STORAGE_KEY = "billmint-sale-invoices";
+interface BackendSale {
+  id?: string | number;
+  invoiceNumber?: string | number | null;
+  date?: string | Date | null;
+  customer?: { id?: string; name?: string | null } | null;
+  grandTotal?: string | number | null;
+  balanceAmount?: string | number | null;
+  paidAmount?: string | number | null;
+  paymentMethod?: string | null;
+  status?: string | null;
+  [key: string]: unknown;
+}
 
-const initialInvoices: SaleInvoice[] = [
-  {
-    id: "18616",
-    date: "19/08/2026, 09:09 PM",
-    invoiceNo: "18616",
-    partyName: "LIVANDER",
-    transaction: "Sale",
-    paymentType: "CARD",
-    amount: 23000,
-    balance: 0,
-    status: "Paid",
-  },
-  {
-    id: "18615",
-    date: "19/09/2026, 08:45 PM",
-    invoiceNo: "18615",
-    partyName: "JYOTI RANJAN BISWAL",
-    transaction: "Sale",
-    paymentType: "ICICI SCAN",
-    amount: 33500,
-    balance: 0,
-    status: "Paid",
-  },
-  {
-    id: "18614",
-    date: "19/09/2026, 07:30 PM",
-    invoiceNo: "18614",
-    partyName: "RAJESH PANDA",
-    transaction: "Sale",
-    paymentType: "ICICI SCAN",
-    amount: 6500,
-    balance: 0,
-    status: "Paid",
-  },
-  {
-    id: "18613",
-    date: "19/09/2026, 06:15 PM",
-    invoiceNo: "18613",
-    partyName: "MIHIR RANJAN TRIPATHY",
-    transaction: "Sale",
-    paymentType: "OTHERS",
-    amount: 7000,
-    balance: 7000,
-    status: "Unpaid",
-  },
-  {
-    id: "18612",
-    date: "19/09/2026, 05:00 PM",
-    invoiceNo: "18612",
-    partyName: "ANIL KUMAR DAS",
-    transaction: "Sale",
-    paymentType: "ICICI SCAN",
-    amount: 51500,
-    balance: 0,
-    status: "Paid",
-  },
-  {
-    id: "18611",
-    date: "19/09/2026, 04:20 PM",
-    invoiceNo: "18611",
-    partyName: "RAJAT KUMAR SAHOO",
-    transaction: "Sale",
-    paymentType: "ICICI SCAN",
-    amount: 20000,
-    balance: 0,
-    status: "Paid",
-  },
-];
+function toNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
 
-function normalizeInvoice(row: Record<string, unknown>): SaleInvoice | null {
-  const invoiceNo = String(
-    row["Invoice no."] ??
-      row["Invoice No"] ??
-      row["Invoice Number"] ??
-      row.invoiceNo ??
-      "",
-  ).trim();
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[₹,\s]/g, ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
 
-  if (!invoiceNo) return null;
+  if (
+    value &&
+    typeof value === "object" &&
+    "toString" in value
+  ) {
+    const parsed = Number(String(value));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
 
-  const amountValue = Number(
-    String(row.Amount ?? row.amount ?? 0).replace(/[₹,\s]/g, ""),
-  );
+  return 0;
+}
 
-  const balanceValue = Number(
-    String(row.Balance ?? row.balance ?? 0).replace(/[₹,\s]/g, ""),
-  );
+function formatDate(value: unknown): string {
+  if (!value) return "—";
 
-  const statusValue = String(row.Status ?? row.status ?? "").trim();
+  const date = value instanceof Date ? value : new Date(String(value));
 
-  return {
-    id: String(row.ID ?? row.id ?? invoiceNo),
-    date: String(row.Date ?? row.date ?? ""),
-    invoiceNo,
-    partyName: String(row["Party Name"] ?? row.partyName ?? "").trim(),
-    transaction: String(row.Transaction ?? row.transaction ?? "Sale").trim(),
-    paymentType: String(row["Payment Type"] ?? row.paymentType ?? "").trim(),
-    amount: Number.isFinite(amountValue) ? amountValue : 0,
-    balance: Number.isFinite(balanceValue) ? balanceValue : 0,
-    status:
-      statusValue.toLowerCase() === "unpaid" || balanceValue > 0
-        ? "Unpaid"
-        : "Paid",
-  };
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function getInvoiceDate(value: string): string {
+  if (!value || value === "—") return "";
+
   const datePart = value.trim().split(",")[0];
   const match = datePart.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
 
@@ -143,133 +92,196 @@ function getInvoiceDate(value: string): string {
   }
 
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? ""
-    : parsed.toISOString().slice(0, 10);
+
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeSale(sale: BackendSale): SaleInvoice {
+  const amount = toNumber(sale.grandTotal);
+  const balance = Math.max(0, toNumber(sale.balanceAmount));
+  const backendStatus = String(sale.status ?? "").toUpperCase();
+
+  let status: string;
+
+  if (backendStatus === "CANCELLED") {
+    status = "Cancelled";
+  } else if (backendStatus === "DRAFT") {
+    status = "Draft";
+  } else if (balance <= 0) {
+    status = "Paid";
+  } else if (balance >= amount && amount > 0) {
+    status = "Unpaid";
+  } else {
+    status = "Partial";
+  }
+
+  return {
+    id: String(sale.id ?? ""),
+    date: formatDate(sale.date),
+    invoiceNo: String(sale.invoiceNumber ?? sale.id ?? "—"),
+    partyName: String(sale.customer?.name ?? "Walk-in Customer"),
+    transaction: "Sale",
+    paymentType: String(sale.paymentMethod ?? "—")
+      .replaceAll("_", " ")
+      .toUpperCase(),
+    amount,
+    balance,
+    status,
+  };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatINR(value: number): string {
+  return value.toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  });
 }
 
 export default function SaleInvoicesPage() {
   const router = useRouter();
-
-  const [invoices, setInvoices] = useState<SaleInvoice[]>(initialInvoices);
-
-  const [search, setSearch] = useState("");
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [invoices, setInvoices] = useState<SaleInvoice[]>([]);
+  const [search, setSearch] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const filtered = invoices.filter((inv) => {
-    const invoiceDate = getInvoiceDate(inv.date);
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-    const matchesSearch =
-      inv.partyName.toLowerCase().includes(search.toLowerCase()) ||
-      inv.invoiceNo.toLowerCase().includes(search.toLowerCase());
+  const loadInvoices = useCallback(async (manualRefresh = false) => {
+    if (manualRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
 
-    const matchesFromDate = !fromDate || invoiceDate >= fromDate;
+    setError("");
 
-    const matchesToDate = !toDate || invoiceDate <= toDate;
-
-    return matchesSearch && matchesFromDate && matchesToDate;
-  });
-
-  /*
-   * Load previously saved invoice data.
-   */
-  useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const response = await api.sales({
+        page: 1,
+        limit: 100,
+      });
 
-      if (saved) {
-        const parsed = JSON.parse(saved);
-
-        if (Array.isArray(parsed)) {
-          setInvoices(parsed);
-        }
-      } else {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(initialInvoices));
+      if (!response || !Array.isArray(response.data)) {
+        throw new Error("The server returned an unexpected sales response.");
       }
-    } catch (error) {
-      console.error("Failed to load sale invoices:", error);
+
+      const normalized = (response.data as BackendSale[])
+        .map(normalizeSale)
+        .filter((invoice) => invoice.id !== "");
+
+      setInvoices(normalized);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Unable to load sale invoices.";
+
+      setError(message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  /*
-   * Save invoices whenever they change.
-   */
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices));
-    } catch (error) {
-      console.error("Failed to save sale invoices:", error);
-    }
-  }, [invoices]);
+    void loadInvoices();
+  }, [loadInvoices]);
 
-  const totalSales = invoices.reduce((sum, inv) => sum + inv.amount, 0);
+  const filtered = invoices.filter((invoice) => {
+    const query = search.trim().toLowerCase();
+    const invoiceDate = getInvoiceDate(invoice.date);
 
-  const totalReceived = invoices.reduce(
-    (sum, inv) => sum + (inv.amount - inv.balance),
+    const matchesSearch =
+      invoice.partyName.toLowerCase().includes(query) ||
+      invoice.invoiceNo.toLowerCase().includes(query);
+
+    const matchesFromDate = !fromDate || (!!invoiceDate && invoiceDate >= fromDate);
+    const matchesToDate = !toDate || (!!invoiceDate && invoiceDate <= toDate);
+
+    const matchesStatus =
+      statusFilter === "ALL" ||
+      invoice.status.toUpperCase() === statusFilter;
+
+    return matchesSearch && matchesFromDate && matchesToDate && matchesStatus;
+  });
+
+  const totalSales = filtered.reduce(
+    (sum, invoice) => sum + invoice.amount,
     0,
   );
 
-  const totalBalance = invoices.reduce((sum, inv) => sum + inv.balance, 0);
+  const totalBalance = filtered.reduce(
+    (sum, invoice) => sum + invoice.balance,
+    0,
+  );
 
-  /*
-   * REAL EXCEL EXPORT
-   *
-   * Creates an actual .xlsx file.
-   */
+  const totalReceived = filtered.reduce(
+    (sum, invoice) => sum + Math.max(0, invoice.amount - invoice.balance),
+    0,
+  );
+
   const handleExcelExport = () => {
     try {
-      const excelData = invoices.map((inv) => ({
-        ID: inv.id,
-        Date: inv.date,
-        "Invoice no.": inv.invoiceNo,
-        "Party Name": inv.partyName,
-        Transaction: inv.transaction,
-        "Payment Type": inv.paymentType,
-        Amount: inv.amount,
-        Balance: inv.balance,
-        Status: inv.status,
+      const excelData = filtered.map((invoice) => ({
+        ID: invoice.id,
+        Date: invoice.date,
+        "Invoice no.": invoice.invoiceNo,
+        "Party Name": invoice.partyName,
+        Transaction: invoice.transaction,
+        "Payment Type": invoice.paymentType,
+        Amount: invoice.amount,
+        Balance: invoice.balance,
+        Status: invoice.status,
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(excelData);
 
       worksheet["!cols"] = [
-        { wch: 12 },
+        { wch: 20 },
         { wch: 24 },
-        { wch: 15 },
+        { wch: 18 },
         { wch: 28 },
         { wch: 15 },
         { wch: 18 },
         { wch: 15 },
         { wch: 15 },
-        { wch: 12 },
+        { wch: 14 },
       ];
 
       const workbook = XLSX.utils.book_new();
-
       XLSX.utils.book_append_sheet(workbook, worksheet, "Sale Invoices");
-
       XLSX.writeFile(workbook, "BillMint-Sale-Invoices.xlsx");
-    } catch (error) {
-      console.error("Excel export failed:", error);
-      alert("Unable to export Excel file.");
+    } catch (err) {
+      console.error("Excel export failed:", err);
+      alert("Unable to export the Excel file.");
     }
   };
 
-  /*
-   * Open system file picker for Excel import.
-   */
   const handleImportClick = () => {
     fileInputRef.current?.click();
   };
 
-  /*
-   * REAL EXCEL IMPORT
-   *
-   * Reads an edited .xlsx file and updates
-   * Sale Invoices with the Excel data.
-   */
   const handleExcelImport = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -285,9 +297,7 @@ export default function SaleInvoicesPage() {
         return;
       }
 
-      const buffer = await file.arrayBuffer();
-
-      const workbook = XLSX.read(buffer, {
+      const workbook = XLSX.read(await file.arrayBuffer(), {
         type: "array",
       });
 
@@ -298,77 +308,52 @@ export default function SaleInvoicesPage() {
         return;
       }
 
-      const worksheet = workbook.Sheets[firstSheetName];
-
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-        worksheet,
-        {
-          defval: "",
-        },
+        workbook.Sheets[firstSheetName],
+        { defval: "" },
       );
 
-      const importedInvoices = rows
-        .map(normalizeInvoice)
-        .filter((invoice): invoice is SaleInvoice => invoice !== null);
+      const validRows = rows.filter((row) => {
+        const invoiceNo = String(
+          row["Invoice no."] ??
+            row["Invoice No"] ??
+            row["Invoice Number"] ??
+            row.invoiceNo ??
+            "",
+        ).trim();
 
-      if (importedInvoices.length === 0) {
-        alert("No valid Sale Invoice data was found in the Excel file.");
+        return invoiceNo.length > 0;
+      });
+
+      if (validRows.length === 0) {
+        alert("No valid invoice rows were found in the Excel file.");
         return;
       }
 
-      setInvoices(importedInvoices);
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(importedInvoices));
-
       alert(
-        `${importedInvoices.length} sale invoice${
-          importedInvoices.length === 1 ? "" : "s"
-        } imported successfully.`,
+        `Found ${validRows.length} invoice rows. Excel import is not connected to the backend yet, so no database records were changed. Use Excel export to download the current server records.`,
       );
-    } catch (error) {
-      console.error("Excel import failed:", error);
-      alert(
-        "Unable to read the Excel file. Please use the Excel file exported from BillMint.",
-      );
+    } catch (err) {
+      console.error("Excel import failed:", err);
+      alert("Unable to read this Excel file.");
     } finally {
-      /*
-       * Allows selecting the same file again later.
-       */
       event.target.value = "";
     }
   };
 
-  /*
-   * Print the complete Sale Invoice page.
-   */
-  const handlePrint = () => {
-    window.print();
-  };
-
-  /*
-   * PDF uses the browser's print dialog.
-   * User can select "Save as PDF".
-   */
-  const handlePDF = () => {
-    window.print();
-  };
-
-  /*
-   * Share an individual invoice.
-   */
   const handleShare = async (invoice: SaleInvoice) => {
-    const shareText = `
-BillMint Sale Invoice
-
-Invoice No: ${invoice.invoiceNo}
-Date: ${invoice.date}
-Party: ${invoice.partyName}
-Transaction: ${invoice.transaction}
-Payment Type: ${invoice.paymentType}
-Amount: ₹ ${invoice.amount.toLocaleString("en-IN")}
-Balance: ₹ ${invoice.balance.toLocaleString("en-IN")}
-Status: ${invoice.status}
-`.trim();
+    const shareText = [
+      "BillMint Sale Invoice",
+      "",
+      `Invoice No: ${invoice.invoiceNo}`,
+      `Date: ${invoice.date}`,
+      `Party: ${invoice.partyName}`,
+      `Transaction: ${invoice.transaction}`,
+      `Payment Type: ${invoice.paymentType}`,
+      `Amount: ₹ ${formatINR(invoice.amount)}`,
+      `Balance: ₹ ${formatINR(invoice.balance)}`,
+      `Status: ${invoice.status}`,
+    ].join("\n");
 
     try {
       if (navigator.share) {
@@ -380,14 +365,8 @@ Status: ${invoice.status}
         await navigator.clipboard.writeText(shareText);
         alert("Invoice details copied to clipboard.");
       }
-    } catch (error) {
-      /*
-       * User closing the native share window
-       * should not show an error.
-       */
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
 
       try {
         await navigator.clipboard.writeText(shareText);
@@ -398,9 +377,6 @@ Status: ${invoice.status}
     }
   };
 
-  /*
-   * Print one invoice.
-   */
   const handleRowPrint = (invoice: SaleInvoice) => {
     const printWindow = window.open("", "_blank", "width=900,height=700");
 
@@ -409,272 +385,128 @@ Status: ${invoice.status}
       return;
     }
 
-    const amount = invoice.amount.toLocaleString("en-IN");
+    const safeInvoiceNo = escapeHtml(invoice.invoiceNo);
+    const safeDate = escapeHtml(invoice.date);
+    const safePartyName = escapeHtml(invoice.partyName);
+    const safePaymentType = escapeHtml(invoice.paymentType);
+    const safeStatus = escapeHtml(invoice.status);
+    const safeTransaction = escapeHtml(invoice.transaction);
+    const amount = formatINR(invoice.amount);
+    const balance = formatINR(invoice.balance);
+    const received = formatINR(Math.max(0, invoice.amount - invoice.balance));
 
-    const balance = invoice.balance.toLocaleString("en-IN");
-
+    printWindow.document.open();
     printWindow.document.write(`
       <!DOCTYPE html>
-      <html>
+      <html lang="en">
         <head>
-          <title>Invoice ${invoice.invoiceNo}</title>
-
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>Sale Invoice ${safeInvoiceNo}</title>
           <style>
-            * {
-              box-sizing: border-box;
-            }
-
+            * { box-sizing: border-box; }
             body {
               margin: 0;
-              padding: 40px;
-              font-family: Arial, Helvetica, sans-serif;
+              padding: 36px;
               color: #222;
               background: #fff;
+              font-family: Arial, Helvetica, sans-serif;
             }
-
-            .invoice {
-              max-width: 800px;
-              margin: 0 auto;
-            }
-
+            .invoice { max-width: 800px; margin: 0 auto; }
             .header {
               display: flex;
               justify-content: space-between;
-              align-items: flex-start;
+              gap: 20px;
               border-bottom: 2px solid #222;
               padding-bottom: 20px;
-              margin-bottom: 30px;
+              margin-bottom: 28px;
             }
-
-            .brand {
-              font-size: 28px;
-              font-weight: 700;
-            }
-
-            .title {
-              font-size: 22px;
-              font-weight: 700;
-              text-align: right;
-            }
-
+            .brand { font-size: 28px; font-weight: 700; }
+            .title { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
             .details {
               display: grid;
               grid-template-columns: 1fr 1fr;
-              gap: 14px;
-              margin-bottom: 30px;
+              gap: 12px;
+              margin-bottom: 24px;
             }
-
-            .detail {
-              border: 1px solid #ddd;
-              padding: 14px;
-              border-radius: 6px;
-            }
-
-            .label {
-              color: #777;
-              font-size: 12px;
-              margin-bottom: 5px;
-            }
-
-            .value {
-              font-size: 15px;
-              font-weight: 600;
-            }
-
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 20px;
-            }
-
-            th,
-            td {
-              border: 1px solid #ddd;
-              padding: 12px;
-              text-align: left;
-            }
-
-            th {
-              background: #f5f5f5;
-            }
-
-            .right {
-              text-align: right;
-            }
-
-            .total {
-              margin-top: 25px;
-              margin-left: auto;
-              width: 300px;
-            }
-
-            .total-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 8px 0;
-            }
-
-            .grand-total {
-              font-size: 20px;
-              font-weight: 700;
-              border-top: 2px solid #222;
-              padding-top: 12px;
-            }
-
-            .status {
-              font-weight: 700;
-            }
-
-            .footer {
-              margin-top: 50px;
-              text-align: center;
-              color: #777;
-              font-size: 12px;
-            }
-
-            @media print {
-              body {
-                padding: 20px;
-              }
-            }
+            .detail { border: 1px solid #ddd; padding: 14px; border-radius: 6px; }
+            .label { color: #777; font-size: 11px; margin-bottom: 6px; }
+            .value { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+            th { background: #f5f5f5; }
+            .right { text-align: right; }
+            .total { margin: 24px 0 0 auto; width: 300px; max-width: 100%; }
+            .total-row { display: flex; justify-content: space-between; gap: 20px; padding: 8px 0; }
+            .grand-total { font-size: 19px; font-weight: 700; border-top: 2px solid #222; padding-top: 12px; }
+            .footer { margin-top: 48px; text-align: center; color: #777; font-size: 12px; }
+            @media print { body { padding: 15px; } }
           </style>
         </head>
-
         <body>
-          <div class="invoice">
-
-            <div class="header">
-              <div class="brand">
-                BillMint
-              </div>
-
+          <main class="invoice">
+            <header class="header">
+              <div class="brand">BillMint</div>
               <div>
-                <div class="title">
-                  SALE INVOICE
-                </div>
-
-                <div>
-                  Invoice No: ${invoice.invoiceNo}
-                </div>
-
-                <div>
-                  Date: ${invoice.date}
-                </div>
+                <div class="title">SALE INVOICE</div>
+                <div>Invoice No: ${safeInvoiceNo}</div>
+                <div>Date: ${safeDate}</div>
               </div>
-            </div>
+            </header>
 
-            <div class="details">
-
+            <section class="details">
               <div class="detail">
-                <div class="label">
-                  PARTY NAME
-                </div>
-
-                <div class="value">
-                  ${escapeHtml(invoice.partyName)}
-                </div>
+                <div class="label">PARTY NAME</div>
+                <div class="value">${safePartyName}</div>
               </div>
-
               <div class="detail">
-                <div class="label">
-                  PAYMENT TYPE
-                </div>
-
-                <div class="value">
-                  ${escapeHtml(invoice.paymentType)}
-                </div>
+                <div class="label">PAYMENT TYPE</div>
+                <div class="value">${safePaymentType}</div>
               </div>
-
               <div class="detail">
-                <div class="label">
-                  TRANSACTION
-                </div>
-
-                <div class="value">
-                  ${escapeHtml(invoice.transaction)}
-                </div>
+                <div class="label">TRANSACTION</div>
+                <div class="value">${safeTransaction}</div>
               </div>
-
               <div class="detail">
-                <div class="label">
-                  STATUS
-                </div>
-
-                <div class="value status">
-                  ${escapeHtml(invoice.status)}
-                </div>
+                <div class="label">STATUS</div>
+                <div class="value">${safeStatus}</div>
               </div>
-
-            </div>
+            </section>
 
             <table>
               <thead>
-                <tr>
-                  <th>Description</th>
-                  <th class="right">Amount</th>
-                </tr>
+                <tr><th>Description</th><th class="right">Amount</th></tr>
               </thead>
-
               <tbody>
                 <tr>
-                  <td>
-                    Sale Invoice ${invoice.invoiceNo}
-                  </td>
-
-                  <td class="right">
-                    ₹ ${amount}
-                  </td>
+                  <td>Sale Invoice ${safeInvoiceNo}</td>
+                  <td class="right">₹ ${amount}</td>
                 </tr>
               </tbody>
             </table>
 
-            <div class="total">
+            <section class="total">
+              <div class="total-row"><span>Total Amount</span><strong>₹ ${amount}</strong></div>
+              <div class="total-row"><span>Received</span><strong>₹ ${received}</strong></div>
+              <div class="total-row"><span>Balance</span><strong>₹ ${balance}</strong></div>
+              <div class="total-row grand-total"><span>Invoice Total</span><span>₹ ${amount}</span></div>
+            </section>
 
-              <div class="total-row">
-                <span>Total Amount</span>
-                <strong>
-                  ₹ ${amount}
-                </strong>
-              </div>
-
-              <div class="total-row">
-                <span>Balance</span>
-                <strong>
-                  ₹ ${balance}
-                </strong>
-              </div>
-
-              <div class="total-row grand-total">
-                <span>Payable</span>
-                <span>
-                  ₹ ${amount}
-                </span>
-              </div>
-
-            </div>
-
-            <div class="footer">
-              Generated by BillMint
-            </div>
-
-          </div>
+            <footer class="footer">Generated by BillMint</footer>
+          </main>
         </body>
       </html>
     `);
-
     printWindow.document.close();
-
     printWindow.focus();
 
-    setTimeout(() => {
+    printWindow.onload = () => {
       printWindow.print();
-      printWindow.close();
-    }, 300);
+    };
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-white overflow-hidden">
-      {/* Hidden Excel file input */}
+    <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
       <input
         ref={fileInputRef}
         type="file"
@@ -683,16 +515,14 @@ Status: ${invoice.status}
         className="hidden"
       />
 
-      {/* Header */}
-      <div className="px-6 py-4 border-b flex items-center justify-between print:hidden">
+      {/* Header — existing layout retained */}
+      <div className="px-6 py-4 border-b flex items-center justify-between gap-4 print:hidden">
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold text-gray-800">Sale Invoices</h1>
-
           <span className="text-gray-400">▼</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Import Excel */}
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={handleImportClick}
             title="Import Excel"
@@ -702,19 +532,18 @@ Status: ${invoice.status}
             Import
           </button>
 
-          {/* Export Excel */}
           <button
             onClick={handleExcelExport}
             title="Export to Excel"
-            className="flex items-center gap-2 border border-green-300 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-1.5 rounded-md font-medium"
+            disabled={loading || filtered.length === 0}
+            className="flex items-center gap-2 border border-green-300 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-1.5 rounded-md font-medium disabled:opacity-50"
           >
             <FileSpreadsheet size={16} />
             Excel
           </button>
 
-          {/* Print */}
           <button
-            onClick={handlePrint}
+            onClick={() => window.print()}
             title="Print"
             className="flex items-center gap-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-md font-medium"
           >
@@ -722,9 +551,8 @@ Status: ${invoice.status}
             Print
           </button>
 
-          {/* PDF */}
           <button
-            onClick={handlePDF}
+            onClick={() => window.print()}
             title="Save as PDF"
             className="flex items-center gap-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-md font-medium"
           >
@@ -732,7 +560,6 @@ Status: ${invoice.status}
             PDF
           </button>
 
-          {/* Add Sale */}
           <button
             onClick={() => router.push("/sales/new")}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-md font-medium"
@@ -743,12 +570,21 @@ Status: ${invoice.status}
       </div>
 
       {/* Filters */}
-      <div className="px-6 py-3 bg-gray-50 border-b flex items-center gap-4 text-sm print:hidden">
+      <div className="px-6 py-3 bg-gray-50 border-b flex items-center gap-4 text-sm flex-wrap print:hidden">
         <div className="flex items-center gap-2">
           <span className="text-gray-600">Filter by:</span>
-
-          <select className="border rounded px-2 py-1">
-            <option>Custom</option>
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="border rounded px-2 py-1 bg-white"
+            aria-label="Filter invoices by status"
+          >
+            <option value="ALL">All invoices</option>
+            <option value="PAID">Paid</option>
+            <option value="PARTIAL">Partial</option>
+            <option value="UNPAID">Unpaid</option>
+            <option value="DRAFT">Draft</option>
+            <option value="CANCELLED">Cancelled</option>
           </select>
         </div>
 
@@ -756,59 +592,61 @@ Status: ${invoice.status}
           <input
             type="date"
             value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
+            onChange={(event) => setFromDate(event.target.value)}
             className="border rounded px-2 py-1"
+            aria-label="From date"
           />
-
           <span>To</span>
-
           <input
             type="date"
             value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
+            onChange={(event) => setToDate(event.target.value)}
             className="border rounded px-2 py-1"
+            aria-label="To date"
           />
         </div>
 
-        <select className="border rounded px-2 py-1">
-          <option>SUREBUY STORE</option>
-        </select>
-
-        <select className="border rounded px-2 py-1">
-          <option>All Users</option>
-        </select>
+        <button
+          type="button"
+          onClick={() => {
+            setFromDate("");
+            setToDate("");
+            setStatusFilter("ALL");
+            setSearch("");
+          }}
+          className="text-blue-600 hover:text-blue-800 font-medium"
+        >
+          Clear filters
+        </button>
       </div>
 
       {/* Summary */}
-      <div className="px-6 py-4 flex gap-10 border-b">
+      <div className="px-6 py-4 flex gap-10 border-b flex-wrap">
         <div>
           <div className="text-sm text-gray-500">Total Sales Amount</div>
-
           <div className="text-2xl font-bold">
-            ₹ {totalSales.toLocaleString("en-IN")}
+            ₹ {formatINR(totalSales)}
           </div>
         </div>
 
         <div>
           <div className="text-sm text-gray-500">Received</div>
-
           <div className="text-lg font-semibold text-green-600">
-            ₹ {totalReceived.toLocaleString("en-IN")}
+            ₹ {formatINR(totalReceived)}
           </div>
         </div>
 
         <div>
           <div className="text-sm text-gray-500">Balance</div>
-
           <div className="text-lg font-semibold text-red-500">
-            ₹ {totalBalance.toLocaleString("en-IN")}
+            ₹ {formatINR(totalBalance)}
           </div>
         </div>
       </div>
 
-      {/* Table */}
+      {/* Transactions */}
       <div className="flex-1 overflow-auto px-6 py-4">
-        <div className="flex items-center justify-between mb-3 print:hidden">
+        <div className="flex items-center justify-between gap-3 mb-3 print:hidden">
           <h2 className="font-medium text-gray-700">Transactions</h2>
 
           <div className="flex items-center gap-2">
@@ -816,156 +654,179 @@ Status: ${invoice.status}
               type="text"
               placeholder="Search Transactions"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="border rounded px-3 py-1.5 text-sm w-56"
+              onChange={(event) => setSearch(event.target.value)}
+              className="border rounded px-3 py-1.5 text-sm w-56 max-w-full"
+              aria-label="Search transactions"
             />
 
             <button
+              type="button"
+              onClick={() => void loadInvoices(true)}
+              disabled={loading || refreshing}
+              className="p-1.5 border rounded hover:bg-gray-50 disabled:opacity-50"
+              title="Refresh invoices from server"
+              aria-label="Refresh invoices"
+            >
+              <RefreshCw
+                size={16}
+                className={refreshing ? "animate-spin" : ""}
+              />
+            </button>
+
+            <button
+              type="button"
               className="p-1.5 border rounded hover:bg-gray-50"
               title="Search"
+              aria-label="Search"
             >
               <Search size={16} />
             </button>
           </div>
         </div>
 
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-gray-500">
-              <th className="py-2 pr-3">Date</th>
+        {error && (
+          <div className="mb-4 border border-red-200 bg-red-50 rounded-md p-4 text-sm text-red-700">
+            <p className="font-medium">Unable to load sale invoices.</p>
+            <p className="mt-1">{error}</p>
+            <button
+              type="button"
+              onClick={() => void loadInvoices(true)}
+              className="mt-3 rounded bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-700"
+            >
+              Try again
+            </button>
+          </div>
+        )}
 
-              <th className="py-2 pr-3">Invoice no.</th>
-
-              <th className="py-2 pr-3">Party Name</th>
-
-              <th className="py-2 pr-3">Transaction</th>
-
-              <th className="py-2 pr-3">Payment Type</th>
-
-              <th className="py-2 pr-3 text-right">Amount</th>
-
-              <th className="py-2 pr-3 text-right">Balance</th>
-
-              <th className="py-2 pr-3">Status</th>
-
-              <th className="py-2">Actions</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {filtered.map((inv) => (
-              <tr key={inv.id} className="border-b hover:bg-blue-50">
-                <td className="py-3">{inv.date}</td>
-
-                <td
-                  className="py-3 cursor-pointer"
-                  onClick={() => router.push(`/sales/${inv.id}`)}
-                >
-                  {inv.invoiceNo}
-                </td>
-
-                <td
-                  className="py-3 font-medium cursor-pointer"
-                  onClick={() => router.push(`/sales/${inv.id}`)}
-                >
-                  {inv.partyName}
-                </td>
-
-                <td className="py-3 text-blue-600">{inv.transaction}</td>
-
-                <td className="py-3">{inv.paymentType}</td>
-
-                <td className="py-3 text-right">
-                  ₹ {inv.amount.toLocaleString("en-IN")}
-                </td>
-
-                <td
-                  className={`py-3 text-right ${
-                    inv.balance > 0 ? "text-red-500" : ""
-                  }`}
-                >
-                  ₹ {inv.balance.toLocaleString("en-IN")}
-                </td>
-
-                <td
-                  className={`py-3 font-medium ${
-                    inv.status === "Paid" ? "text-green-600" : "text-red-500"
-                  }`}
-                >
-                  {inv.status}
-                </td>
-
-                {/* Actions */}
-                <td className="py-3">
-                  <div className="flex items-center gap-1">
-                    {/* Share */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleShare(inv);
-                      }}
-                      title="Share Invoice"
-                      className="p-1.5 rounded hover:bg-blue-100 text-blue-600"
-                    >
-                      <Share2 size={16} />
-                    </button>
-
-                    {/* Print */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRowPrint(inv);
-                      }}
-                      title="Print Invoice"
-                      className="p-1.5 rounded hover:bg-gray-200 text-gray-700"
-                    >
-                      <Printer size={16} />
-                    </button>
-
-                    {/* More */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        router.push(`/sales/${inv.id}`);
-                      }}
-                      title="More"
-                      className="p-1.5 rounded hover:bg-gray-100 text-gray-600"
-                    >
-                      <MoreVertical size={16} />
-                    </button>
-                  </div>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[950px]">
+            <thead>
+              <tr className="border-b text-left text-gray-500">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Invoice no.</th>
+                <th className="py-2 pr-3">Party Name</th>
+                <th className="py-2 pr-3">Transaction</th>
+                <th className="py-2 pr-3">Payment Type</th>
+                <th className="py-2 pr-3 text-right">Amount</th>
+                <th className="py-2 pr-3 text-right">Balance</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2">Actions</th>
               </tr>
-            ))}
+            </thead>
 
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={9} className="py-10 text-center text-gray-500">
-                  No transactions found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-gray-500">
+                    Loading sale invoices from the server…
+                  </td>
+                </tr>
+              ) : !error && filtered.map((invoice) => (
+                <tr key={invoice.id} className="border-b hover:bg-blue-50">
+                  <td className="py-3 pr-3 whitespace-nowrap">{invoice.date}</td>
+
+                  <td
+                    className="py-3 pr-3 text-blue-600 hover:underline cursor-pointer"
+                    onClick={() => router.push(`/sales/${encodeURIComponent(invoice.id)}`)}
+                  >
+                    {invoice.invoiceNo}
+                  </td>
+
+                  <td
+                    className="py-3 pr-3 font-medium cursor-pointer"
+                    onClick={() => router.push(`/sales/${encodeURIComponent(invoice.id)}`)}
+                  >
+                    {invoice.partyName}
+                  </td>
+
+                  <td className="py-3 pr-3 text-blue-600">
+                    {invoice.transaction}
+                  </td>
+
+                  <td className="py-3 pr-3">{invoice.paymentType}</td>
+
+                  <td className="py-3 pr-3 text-right whitespace-nowrap">
+                    ₹ {formatINR(invoice.amount)}
+                  </td>
+
+                  <td
+                    className={`py-3 pr-3 text-right whitespace-nowrap ${
+                      invoice.balance > 0 ? "text-red-500" : ""
+                    }`}
+                  >
+                    ₹ {formatINR(invoice.balance)}
+                  </td>
+
+                  <td
+                    className={`py-3 pr-3 font-medium ${
+                      invoice.status === "Paid"
+                        ? "text-green-600"
+                        : invoice.status === "Cancelled"
+                          ? "text-gray-500"
+                          : invoice.status === "Draft"
+                            ? "text-amber-600"
+                            : "text-red-500"
+                    }`}
+                  >
+                    {invoice.status}
+                  </td>
+
+                  <td className="py-3">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleShare(invoice)}
+                        title="Share Invoice"
+                        className="p-1.5 rounded hover:bg-blue-100 text-blue-600"
+                      >
+                        <Share2 size={16} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRowPrint(invoice)}
+                        title="Print Invoice"
+                        className="p-1.5 rounded hover:bg-gray-200 text-gray-700"
+                      >
+                        <Printer size={16} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/sales/${encodeURIComponent(invoice.id)}`)}
+                        title="View Invoice"
+                        className="p-1.5 rounded hover:bg-gray-100 text-gray-600"
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+
+              {!loading && !error && filtered.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="py-10 text-center text-gray-500">
+                    {invoices.length === 0
+                      ? "No sale invoices are available in your account yet."
+                      : "No transactions match your search or filters."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {!loading && !error && invoices.length > 100 && (
+          <p className="mt-3 text-xs text-gray-500">
+            Showing the first 100 invoices returned by the API. Pagination can be added to load the remaining records.
+          </p>
+        )}
       </div>
 
-      {/* Print-only footer */}
       <div className="hidden print:block text-center text-xs text-gray-500 py-4">
         BillMint — Sale Invoices
       </div>
     </div>
   );
-}
-
-/*
- * Prevent invoice data from breaking the
- * HTML used by the individual print window.
- */
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }

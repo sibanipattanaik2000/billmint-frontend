@@ -484,9 +484,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  paymentsIn: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<PaginatedResponse<any>>(
+      `/payments${buildQuery(params)}`,
+    ),
+
+  paymentsOut: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<PaginatedResponse<any>>(
+      `/payments/out${buildQuery(params)}`,
+    ),
 
   createPaymentIn: (
     data: {
+      customerId?: string | null;
       amount: number;
       date: string;
       paymentMethod: string;
@@ -500,20 +514,21 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  createPaymentOut: (
-    data: {
-      amount: number;
-      date: string;
-      paymentMethod: string;
-      bankAccountId: string;
-      reference?: string | null;
-      notes?: string | null;
-    },
-  ) =>
-    request<ApiSuccess<any>>("/payments/out", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
+ createPaymentOut: (
+  data: {
+    supplierId?: string | null;
+    amount: number;
+    date: string;
+    paymentMethod: string;
+    bankAccountId?: string | null;
+    reference?: string | null;
+    notes?: string | null;
+  },
+) =>
+  request<ApiSuccess<any>>("/payments/out", {
+    method: "POST",
+    body: JSON.stringify(data),
+  }),
 
   /* =======================================================
      EXPENSES

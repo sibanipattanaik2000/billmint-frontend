@@ -1,407 +1,555 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { api, formatINR } from "@/lib/api";
 
 interface PurchaseInvoice {
   id: string;
+  billNumber: string;
   date: string;
-  invoiceNo: string;
-  partyName: string;
-  transaction: string;
-  paymentType: string;
-  amount: number;
-  balance: number;
-  status: "Paid" | "Unpaid" | "Partial";
+  status: string;
+  grandTotal: number | string;
+  paidAmount: number | string;
+  balanceAmount: number | string;
+  paymentMethod?: string | null;
+  supplier?: {
+    id: string;
+    name?: string | null;
+    businessName?: string | null;
+    phone?: string | null;
+  } | null;
 }
 
-const initialPurchases: PurchaseInvoice[] = [
-  {
-    id: "P-1001",
-    date: "18/09/2026, 11:30 AM",
-    invoiceNo: "P-1001",
-    partyName: "TECH SUPPLIERS PVT LTD",
-    transaction: "Purchase",
-    paymentType: "BANK",
-    amount: 125000,
-    balance: 0,
-    status: "Paid",
-  },
-  {
-    id: "P-1002",
-    date: "17/09/2026, 04:15 PM",
-    invoiceNo: "P-1002",
-    partyName: "MOBILE WORLD DISTRIBUTORS",
-    transaction: "Purchase",
-    paymentType: "UPI",
-    amount: 87500,
-    balance: 25000,
-    status: "Partial",
-  },
-  {
-    id: "P-1003",
-    date: "16/09/2026, 02:40 PM",
-    invoiceNo: "P-1003",
-    partyName: "TECH SUPPLIERS PVT LTD",
-    transaction: "Purchase",
-    paymentType: "CASH",
-    amount: 42000,
-    balance: 42000,
-    status: "Unpaid",
-  },
-  {
-    id: "P-1004",
-    date: "15/09/2026, 10:05 AM",
-    invoiceNo: "P-1004",
-    partyName: "MOBILE WORLD DISTRIBUTORS",
-    transaction: "Purchase",
-    paymentType: "BANK",
-    amount: 156000,
-    balance: 0,
-    status: "Paid",
-  },
-];
+function formatDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function displayStatus(status: string) {
+  switch (status) {
+    case "PAID":
+      return "Paid";
+    case "PARTIALLY_PAID":
+      return "Partial";
+    case "UNPAID":
+      return "Unpaid";
+    case "DRAFT":
+      return "Draft";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return status.replaceAll("_", " ");
+  }
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
 
 export default function PurchasesPage() {
   const router = useRouter();
-  const [purchases, setPurchases] = useState<PurchaseInvoice[]>(initialPurchases);
+
+  const [purchases, setPurchases] = useState<PurchaseInvoice[]>([]);
   const [search, setSearch] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
-  const filtered = purchases.filter(
-    (inv) =>
-      inv.partyName.toLowerCase().includes(search.toLowerCase()) ||
-      inv.invoiceNo.toLowerCase().includes(search.toLowerCase())
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+
+  const loadPurchases = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await api.purchases({
+        page,
+        limit: 100,
+        search: search.trim() || undefined,
+        status: statusFilter || undefined,
+        from: fromDate
+          ? new Date(`${fromDate}T00:00:00`).toISOString()
+          : undefined,
+        to: toDate
+          ? new Date(`${toDate}T23:59:59.999`).toISOString()
+          : undefined,
+      });
+
+      setPurchases(response.data ?? []);
+      setTotalPages(Math.max(1, response.pagination?.totalPages ?? 1));
+      setTotalRecords(response.pagination?.total ?? 0);
+    } catch (err) {
+      setPurchases([]);
+      setTotalPages(1);
+      setTotalRecords(0);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load purchase invoices.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, statusFilter, fromDate, toDate]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadPurchases();
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [loadPurchases]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, fromDate, toDate]);
+
+  const totalPurchase = purchases.reduce(
+    (sum, purchase) => sum + Number(purchase.grandTotal || 0),
+    0,
   );
 
-  const totalPurchase = purchases.reduce((sum, inv) => sum + inv.amount, 0);
   const totalPaid = purchases.reduce(
-    (sum, inv) => sum + (inv.amount - inv.balance),
-    0
+    (sum, purchase) => sum + Number(purchase.paidAmount || 0),
+    0,
   );
-  const totalBalance = purchases.reduce((sum, inv) => sum + inv.balance, 0);
 
-  // Excel Export
-  const exportToExcel = () => {
+  const totalBalance = purchases.reduce(
+    (sum, purchase) => sum + Number(purchase.balanceAmount || 0),
+    0,
+  );
+
+  const getSupplierName = (purchase: PurchaseInvoice) =>
+    purchase.supplier?.businessName ||
+    purchase.supplier?.name ||
+    "Walk-in supplier";
+
+  const exportToCSV = () => {
     const headers = [
       "Date",
-      "Invoice No",
-      "Party Name",
-      "Transaction",
-      "Payment Type",
-      "Amount",
+      "Bill Number",
+      "Supplier",
+      "Payment Method",
+      "Total Amount",
+      "Paid Amount",
       "Balance",
       "Status",
     ];
 
-    const rows = purchases.map((inv) => [
-      inv.date,
-      inv.invoiceNo,
-      inv.partyName,
-      inv.transaction,
-      inv.paymentType,
-      inv.amount,
-      inv.balance,
-      inv.status,
+    const rows = purchases.map((purchase) => [
+      formatDate(purchase.date),
+      purchase.billNumber,
+      getSupplierName(purchase),
+      purchase.paymentMethod || "",
+      Number(purchase.grandTotal || 0).toFixed(2),
+      Number(purchase.paidAmount || 0).toFixed(2),
+      Number(purchase.balanceAmount || 0).toFixed(2),
+      displayStatus(purchase.status),
     ]);
 
-    const csvContent =
-      "data:text/csv;charset=utf-8," +
-      [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const csv = [
+      headers.map(csvCell).join(","),
+      ...rows.map((row) => row.map(csvCell).join(",")),
+    ].join("\r\n");
 
-    const encodedUri = encodeURI(csvContent);
+    const blob = new Blob(["\uFEFF", csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute(
-      "download",
-      `Purchase_Invoices_${new Date().toISOString().slice(0, 10)}.csv`
-    );
+
+    link.href = url;
+    link.download = `BillMint_Purchases_${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
-  // Excel Import
-  const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleShare = async (purchase: PurchaseInvoice) => {
+    const text = [
+      `Purchase Bill: ${purchase.billNumber}`,
+      `Supplier: ${getSupplierName(purchase)}`,
+      `Date: ${formatDate(purchase.date)}`,
+      `Total: ${formatINR(purchase.grandTotal)}`,
+      `Paid: ${formatINR(purchase.paidAmount)}`,
+      `Balance: ${formatINR(purchase.balanceAmount)}`,
+      `Status: ${displayStatus(purchase.status)}`,
+    ].join("\n");
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      const lines = text.split("\n").filter((line) => line.trim() !== "");
-      const dataLines = lines.slice(1);
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `Purchase ${purchase.billNumber}`,
+          text,
+        });
+      } else {
+        await navigator.clipboard.writeText(text);
+        window.alert("Purchase details copied to clipboard.");
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
 
-      const imported: PurchaseInvoice[] = dataLines.map((line, index) => {
-        const cols = line.split(",").map((c) => c.trim());
-        return {
-          id: cols[1] || `IMP-P-${Date.now()}-${index}`,
-          date: cols[0] || new Date().toLocaleString("en-GB"),
-          invoiceNo: cols[1] || `IMP-P-${index + 1}`,
-          partyName: cols[2] || "Unknown",
-          transaction: cols[3] || "Purchase",
-          paymentType: cols[4] || "CASH",
-          amount: Number(cols[5]) || 0,
-          balance: Number(cols[6]) || 0,
-          status: (cols[7] as "Paid" | "Unpaid" | "Partial") || "Unpaid",
-        };
-      });
-
-      setPurchases((prev) => [...imported, ...prev]);
-      alert(`${imported.length} purchase invoices imported successfully!`);
-    };
-    reader.readAsText(file);
-
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const handleShare = (inv: PurchaseInvoice) => {
-    const text = `Purchase Invoice #${inv.invoiceNo}\nParty: ${inv.partyName}\nAmount: ₹${inv.amount}\nStatus: ${inv.status}`;
-    if (navigator.share) {
-      navigator.share({ title: `Purchase ${inv.invoiceNo}`, text });
-    } else {
-      navigator.clipboard.writeText(text);
-      alert("Invoice details copied to clipboard!");
+      setError("Unable to share the purchase details.");
     }
   };
 
-  const handlePrintSingle = (inv: PurchaseInvoice) => {
+  const handlePrintSingle = (purchase: PurchaseInvoice) => {
     const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
+
+    if (!printWindow) {
+      setError("Allow pop-ups in your browser to print this purchase.");
+      return;
+    }
+
+    const escapeHtml = (value: unknown) =>
+      String(value ?? "").replace(/[&<>"']/g, (character) => {
+        const entities: Record<string, string> = {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        };
+
+        return entities[character];
+      });
 
     printWindow.document.write(`
+      <!doctype html>
       <html>
         <head>
-          <title>Purchase Invoice ${inv.invoiceNo}</title>
+          <title>Purchase ${escapeHtml(purchase.billNumber)}</title>
+          <meta charset="utf-8" />
           <style>
-            body { font-family: Arial, sans-serif; padding: 40px; }
-            h1 { margin-bottom: 5px; }
-            .meta { margin-bottom: 30px; color: #555; }
+            body { font-family: Arial, sans-serif; padding: 36px; color: #222; }
+            h1 { margin-bottom: 4px; }
+            .muted { color: #666; }
+            .details { margin: 24px 0; line-height: 1.9; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
             th { background: #f5f5f5; }
+            .amount { text-align: right; }
           </style>
         </head>
         <body>
           <h1>Purchase Invoice</h1>
-          <div class="meta">
-            <strong>Invoice No:</strong> ${inv.invoiceNo}<br/>
-            <strong>Date:</strong> ${inv.date}<br/>
-            <strong>Party:</strong> ${inv.partyName}<br/>
-            <strong>Payment:</strong> ${inv.paymentType}<br/>
-            <strong>Status:</strong> ${inv.status}
+          <p class="muted">BillMint</p>
+          <div class="details">
+            <strong>Bill Number:</strong> ${escapeHtml(purchase.billNumber)}<br />
+            <strong>Date:</strong> ${escapeHtml(formatDate(purchase.date))}<br />
+            <strong>Supplier:</strong> ${escapeHtml(getSupplierName(purchase))}<br />
+            <strong>Payment Method:</strong> ${escapeHtml(purchase.paymentMethod || "—")}<br />
+            <strong>Status:</strong> ${escapeHtml(displayStatus(purchase.status))}
           </div>
           <table>
-            <tr>
-              <th>Description</th>
-              <th>Amount</th>
-              <th>Balance</th>
-            </tr>
-            <tr>
-              <td>Purchase</td>
-              <td>₹ ${inv.amount.toLocaleString("en-IN")}</td>
-              <td>₹ ${inv.balance.toLocaleString("en-IN")}</td>
-            </tr>
+            <thead>
+              <tr><th>Description</th><th class="amount">Amount</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Purchase total</td><td class="amount">${escapeHtml(formatINR(purchase.grandTotal))}</td></tr>
+              <tr><td>Amount paid</td><td class="amount">${escapeHtml(formatINR(purchase.paidAmount))}</td></tr>
+              <tr><td>Outstanding balance</td><td class="amount">${escapeHtml(formatINR(purchase.balanceAmount))}</td></tr>
+            </tbody>
           </table>
           <script>window.onload = () => window.print();</script>
         </body>
       </html>
     `);
+
     printWindow.document.close();
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-white overflow-hidden">
-      {/* Header */}
-      <div className="px-6 py-4 border-b flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold text-gray-800">Purchase Invoices</h1>
-          <span className="text-gray-400">▼</span>
+    <div className="flex flex-1 flex-col overflow-hidden bg-white">
+      <header className="flex items-center justify-between gap-3 border-b px-6 py-4">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-800">
+            Purchase Invoices
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Manage supplier purchases and outstanding balances.
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/purchases/new")}
-            className="bg-red-500 hover:bg-red-600 text-white px-4 py-1.5 rounded-md font-medium"
-          >
-            + Add Purchase
-          </button>
-        </div>
-      </div>
 
-      {/* Filters */}
-      <div className="px-6 py-3 bg-gray-50 border-b flex items-center gap-4 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-gray-600">Filter by:</span>
-          <select className="border rounded px-2 py-1">
-            <option>Custom</option>
+        <button
+          onClick={() => router.push("/purchases/new")}
+          className="shrink-0 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+        >
+          + Add Purchase
+        </button>
+      </header>
+
+      <section className="grid grid-cols-1 gap-4 border-b bg-gray-50 px-6 py-4 sm:grid-cols-3">
+        <div>
+          <p className="text-sm text-gray-500">Purchase Total</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">
+            {formatINR(totalPurchase)}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Paid</p>
+          <p className="mt-1 text-xl font-bold text-green-600">
+            {formatINR(totalPaid)}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Outstanding Balance</p>
+          <p className="mt-1 text-xl font-bold text-red-600">
+            {formatINR(totalBalance)}
+          </p>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-3 border-b px-6 py-4 lg:flex-row lg:items-end">
+        <div className="flex-1">
+          <label className="mb-1 block text-xs font-medium text-gray-500">
+            Search
+          </label>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Bill number or supplier..."
+            className="w-full rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">
+            Status
+          </label>
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="w-full rounded-md border px-3 py-2 text-sm lg:w-40"
+          >
+            <option value="">All statuses</option>
+            <option value="DRAFT">Draft</option>
+            <option value="UNPAID">Unpaid</option>
+            <option value="PARTIALLY_PAID">Partially paid</option>
+            <option value="PAID">Paid</option>
+            <option value="CANCELLED">Cancelled</option>
           </select>
         </div>
-        <div className="flex items-center gap-2">
-          <input type="date" className="border rounded px-2 py-1" />
-          <span>To</span>
-          <input type="date" className="border rounded px-2 py-1" />
-        </div>
-        <select className="border rounded px-2 py-1">
-          <option>SUREBUY STORE</option>
-        </select>
-        <select className="border rounded px-2 py-1">
-          <option>All Users</option>
-        </select>
-      </div>
 
-      {/* Summary */}
-      <div className="px-6 py-4 flex gap-10 border-b">
         <div>
-          <div className="text-sm text-gray-500">Total Purchase Amount</div>
-          <div className="text-2xl font-bold">
-            ₹ {totalPurchase.toLocaleString("en-IN")}
-          </div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">
+            From
+          </label>
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(event) => setFromDate(event.target.value)}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+          />
         </div>
+
         <div>
-          <div className="text-sm text-gray-500">Paid</div>
-          <div className="text-lg font-semibold text-green-600">
-            ₹ {totalPaid.toLocaleString("en-IN")}
-          </div>
-        </div>
-        <div>
-          <div className="text-sm text-gray-500">Balance</div>
-          <div className="text-lg font-semibold text-red-500">
-            ₹ {totalBalance.toLocaleString("en-IN")}
-          </div>
-        </div>
-      </div>
-
-      {/* Table Section */}
-      <div className="flex-1 overflow-auto px-6 py-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-medium text-gray-700">Transactions</h2>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="file"
-              accept=".csv"
-              ref={fileInputRef}
-              onChange={handleExcelImport}
-              className="hidden"
-            />
-
-            <button
-              onClick={exportToExcel}
-              className="flex items-center gap-1.5 border rounded px-3 py-1.5 text-sm hover:bg-gray-50"
-            >
-              📊 Excel
-            </button>
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 border rounded px-3 py-1.5 text-sm hover:bg-gray-50"
-            >
-              📥 Import
-            </button>
-
-            <button
-              onClick={() => window.print()}
-              className="flex items-center gap-1.5 border rounded px-3 py-1.5 text-sm hover:bg-gray-50"
-            >
-              🖨️ Print
-            </button>
-
-            <input
-              type="text"
-              placeholder="Search Transactions"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="border rounded px-3 py-1.5 text-sm w-52 ml-2"
-            />
-          </div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">
+            To
+          </label>
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(event) => setToDate(event.target.value)}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+          />
         </div>
 
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-gray-500">
-              <th className="py-2 pr-3">Date</th>
-              <th className="py-2 pr-3">Invoice no.</th>
-              <th className="py-2 pr-3">Party Name</th>
-              <th className="py-2 pr-3">Transaction</th>
-              <th className="py-2 pr-3">Payment Type</th>
-              <th className="py-2 pr-3 text-right">Amount</th>
-              <th className="py-2 pr-3 text-right">Balance</th>
-              <th className="py-2 pr-3">Status</th>
-              <th className="py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((inv) => (
-              <tr key={inv.id} className="border-b hover:bg-blue-50">
-                <td
-                  className="py-3 cursor-pointer"
-                  onClick={() => router.push(`/purchases/${inv.id}`)}
-                >
-                  {inv.date}
-                </td>
-                <td
-                  className="py-3 cursor-pointer"
-                  onClick={() => router.push(`/purchases/${inv.id}`)}
-                >
-                  {inv.invoiceNo}
-                </td>
-                <td
-                  className="py-3 font-medium cursor-pointer"
-                  onClick={() => router.push(`/purchases/${inv.id}`)}
-                >
-                  {inv.partyName}
-                </td>
-                <td className="py-3 text-blue-600">{inv.transaction}</td>
-                <td className="py-3">{inv.paymentType}</td>
-                <td className="py-3 text-right">
-                  ₹ {inv.amount.toLocaleString("en-IN")}
-                </td>
-                <td
-                  className={`py-3 text-right ${
-                    inv.balance > 0 ? "text-red-500" : ""
-                  }`}
-                >
-                  ₹ {inv.balance.toLocaleString("en-IN")}
-                </td>
-                <td
-                  className={`py-3 font-medium ${
-                    inv.status === "Paid"
-                      ? "text-green-600"
-                      : inv.status === "Partial"
-                      ? "text-orange-500"
-                      : "text-red-500"
-                  }`}
-                >
-                  {inv.status}
-                </td>
-                <td className="py-3">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleShare(inv)}
-                      className="text-blue-600 hover:text-blue-800 text-sm"
-                    >
-                      Share
-                    </button>
-                    <span className="text-gray-300">|</span>
-                    <button
-                      onClick={() => handlePrintSingle(inv)}
-                      className="text-gray-600 hover:text-gray-900 text-sm"
-                    >
-                      Print
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <button
+          onClick={exportToCSV}
+          disabled={purchases.length === 0}
+          className="rounded-md border px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Export CSV
+        </button>
+      </section>
 
-        {filtered.length === 0 && (
-          <div className="py-16 text-center text-gray-400">
-            No purchase invoices found
+      <main className="flex-1 overflow-auto px-6 py-4">
+        {error && (
+          <div
+            role="alert"
+            className="mb-4 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+          >
+            <span>{error}</span>
+            <button
+              onClick={() => void loadPurchases()}
+              className="shrink-0 font-medium underline"
+            >
+              Retry
+            </button>
           </div>
         )}
-      </div>
+
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="font-medium text-gray-700">Transactions</h2>
+          <span className="text-xs text-gray-500">
+            {totalRecords} record{totalRecords === 1 ? "" : "s"} found
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[850px] text-sm">
+            <thead>
+              <tr className="border-b text-left text-gray-500">
+                <th className="py-3 pr-3">Date</th>
+                <th className="py-3 pr-3">Bill Number</th>
+                <th className="py-3 pr-3">Supplier</th>
+                <th className="py-3 pr-3">Payment Method</th>
+                <th className="py-3 pr-3 text-right">Total</th>
+                <th className="py-3 pr-3 text-right">Balance</th>
+                <th className="py-3 pr-3">Status</th>
+                <th className="py-3">Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {purchases.map((purchase) => {
+                const status = displayStatus(purchase.status);
+
+                const statusClass =
+                  purchase.status === "PAID"
+                    ? "bg-green-50 text-green-700"
+                    : purchase.status === "PARTIALLY_PAID"
+                      ? "bg-orange-50 text-orange-700"
+                      : purchase.status === "CANCELLED"
+                        ? "bg-gray-100 text-gray-600"
+                        : purchase.status === "DRAFT"
+                          ? "bg-blue-50 text-blue-700"
+                          : "bg-red-50 text-red-700";
+
+                return (
+                  <tr
+                    key={purchase.id}
+                    className="border-b hover:bg-gray-50"
+                  >
+                    <td className="py-3 pr-3">
+                      {formatDate(purchase.date)}
+                    </td>
+                    <td className="py-3 pr-3">
+                      <button
+                        onClick={() => router.push(`/purchases/${purchase.id}`)}
+                        className="font-medium text-blue-700 hover:underline"
+                      >
+                        {purchase.billNumber}
+                      </button>
+                    </td>
+                    <td className="py-3 pr-3">
+                      {getSupplierName(purchase)}
+                    </td>
+                    <td className="py-3 pr-3">
+                      {purchase.paymentMethod || "—"}
+                    </td>
+                    <td className="py-3 pr-3 text-right font-medium">
+                      {formatINR(purchase.grandTotal)}
+                    </td>
+                    <td
+                      className={`py-3 pr-3 text-right ${
+                        Number(purchase.balanceAmount) > 0
+                          ? "font-medium text-red-600"
+                          : ""
+                      }`}
+                    >
+                      {formatINR(purchase.balanceAmount)}
+                    </td>
+                    <td className="py-3 pr-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${statusClass}`}
+                      >
+                        {status}
+                      </span>
+                    </td>
+                    <td className="py-3">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => void handleShare(purchase)}
+                          className="text-blue-600 hover:underline"
+                        >
+                          Share
+                        </button>
+                        <button
+                          onClick={() => handlePrintSingle(purchase)}
+                          className="text-gray-600 hover:underline"
+                        >
+                          Print
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {loading && (
+          <p className="py-12 text-center text-sm text-gray-500">
+            Loading purchase invoices...
+          </p>
+        )}
+
+        {!loading && !error && purchases.length === 0 && (
+          <div className="py-16 text-center">
+            <p className="font-medium text-gray-700">
+              No purchase invoices found
+            </p>
+            <p className="mt-1 text-sm text-gray-500">
+              Create a purchase or change your search filters.
+            </p>
+          </div>
+        )}
+
+        {!loading && totalPages > 1 && (
+          <div className="mt-5 flex items-center justify-end gap-3 border-t pt-4">
+            <span className="text-sm text-gray-500">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page <= 1}
+              className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() =>
+                setPage((current) => Math.min(totalPages, current + 1))
+              }
+              disabled={page >= totalPages}
+              className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        )}
+
+        {!loading && purchases.length > 0 && (
+          <p className="mt-4 text-xs text-gray-500">
+            Summary totals reflect the records on the current page. Export CSV
+            exports the records on the current page.
+          </p>
+        )}
+      </main>
     </div>
   );
 }
