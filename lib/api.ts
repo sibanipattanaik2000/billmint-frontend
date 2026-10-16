@@ -692,7 +692,74 @@ export const api = {
       },
     ),
 
+  /* =======================================================
+     DELIVERY CHALLANS
+  ======================================================= */
 
+  deliveryChallans: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<PaginatedResponse<any>>(
+      `/delivery-challans${buildQuery(params)}`,
+    ),
+
+  deliveryChallan: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/delivery-challans/${encodeURIComponent(id)}`,
+    ),
+
+  createDeliveryChallan: (data: {
+    customerId?: string | null;
+    date?: string;
+    reason?: string | null;
+    transportInfo?: string | null;
+    notes?: string | null;
+    items: Array<{
+      itemId?: string | null;
+      itemName?: string;
+      quantity: number;
+      unit?: string | null;
+      notes?: string | null;
+    }>;
+  }) =>
+    request<ApiSuccess<any>>("/delivery-challans", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  /* =======================================================
+     SALE RETURNS
+  ======================================================= */
+
+  saleReturns: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<PaginatedResponse<any>>(
+      `/sale-returns${buildQuery(params)}`,
+    ),
+
+  saleReturn: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/sale-returns/${encodeURIComponent(id)}`,
+    ),
+
+  createSaleReturn: (data: {
+    saleId?: string | null;
+    customerId?: string | null;
+    date?: string;
+    notes?: string | null;
+    items: Array<{
+      itemId?: string | null;
+      itemName: string;
+      quantity: number;
+      rate: number;
+      taxAmount?: number;
+    }>;
+  }) =>
+    request<ApiSuccess<any>>("/sale-returns", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   /* =======================================================
      PURCHASES
   ======================================================= */
