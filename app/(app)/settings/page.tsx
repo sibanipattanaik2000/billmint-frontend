@@ -1,72 +1,298 @@
+
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { api, ApiError } from "@/lib/api";
+
+type SettingsData = {
+  business: {
+    id: string;
+    name: string;
+    ownerName: string;
+    email: string | null;
+    phone: string | null;
+    gstin: string | null;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    financialYearStart: number;
+  };
+  settings: {
+    invoicePrefix: string;
+    invoiceNextNumber: number;
+    quotationPrefix: string;
+    quotationNextNumber: number;
+    challanPrefix: string;
+    challanNextNumber: number;
+    purchasePrefix: string;
+    purchaseNextNumber: number;
+    defaultTaxRate: number | string;
+    currency: string;
+    currencySymbol: string;
+    decimalPlaces: number;
+    termsAndConditions: string | null;
+    bankName: string | null;
+    bankAccountNumber: string | null;
+    bankIfsc: string | null;
+    bankBranch: string | null;
+    upiId: string | null;
+    invoiceTemplate: string;
+  };
+};
+
+type Tab =
+  | "company"
+  | "invoice"
+  | "tax"
+  | "users"
+  | "backup"
+  | "general";
+
+const tabs: { id: Tab; label: string }[] = [
+  { id: "company", label: "Company Profile" },
+  { id: "invoice", label: "Invoice Settings" },
+  { id: "tax", label: "Tax & GST" },
+  { id: "users", label: "Users & Permissions" },
+  { id: "backup", label: "Backup & Restore" },
+  { id: "general", label: "General" },
+];
+
+const inputClass =
+  "mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+
+const labelClass = "block text-sm font-medium text-gray-600";
+
+const emptyToNull = (value: string) => value.trim() || null;
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<
-    "company" | "invoice" | "tax" | "users" | "backup" | "general"
-  >("company");
+  const [activeTab, setActiveTab] = useState<Tab>("company");
+  const [data, setData] = useState<SettingsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
-  // Company Profile
-  const [companyName, setCompanyName] = useState("SUREBUY STORE");
-  const [phone, setPhone] = useState("+91 77956 87633");
-  const [email, setEmail] = useState("surebuystore@gmail.com");
-  const [gstin, setGstin] = useState("");
-  const [address, setAddress] = useState("Bhubaneswar, Odisha");
-  const [state, setState] = useState("Odisha");
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    setError("");
 
-  // Invoice Settings
-  const [invoicePrefix, setInvoicePrefix] = useState("INV");
-  const [nextInvoiceNo, setNextInvoiceNo] = useState("18617");
-  const [terms, setTerms] = useState(
-    "Goods once sold can not be exchanged or money refunded"
-  );
-  const [showSignature, setShowSignature] = useState(true);
-  const [showBankDetails, setShowBankDetails] = useState(true);
+    try {
+      const response = await api.businessSettings();
 
-  // Tax Settings
-  const [enableGst, setEnableGst] = useState(true);
-  const [defaultTaxRate, setDefaultTaxRate] = useState("18");
+      if (!response.success || !response.data?.business || !response.data?.settings) {
+        throw new Error("The server returned an invalid settings response.");
+      }
 
-  // General
-  const [currency, setCurrency] = useState("INR");
-  const [dateFormat, setDateFormat] = useState("DD/MM/YYYY");
-  const [financialYear, setFinancialYear] = useState("2025-26");
+      setData({
+        business: response.data.business,
+        settings: response.data.settings,
+      });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load your business settings.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const handleSave = () => {
-    alert("Settings saved successfully!");
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
+  const updateBusiness = (
+    field: keyof SettingsData["business"],
+    value: string | number | null,
+  ) => {
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            business: { ...current.business, [field]: value },
+          }
+        : current,
+    );
   };
 
-  const tabs = [
-    { id: "company", label: "Company Profile" },
-    { id: "invoice", label: "Invoice Settings" },
-    { id: "tax", label: "Tax & GST" },
-    { id: "users", label: "Users & Permissions" },
-    { id: "backup", label: "Backup & Restore" },
-    { id: "general", label: "General" },
-  ] as const;
+  const updateSetting = (
+    field: keyof SettingsData["settings"],
+    value: string | number | null,
+  ) => {
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            settings: { ...current.settings, [field]: value },
+          }
+        : current,
+    );
+  };
 
-  return (
-    <div className="flex-1 flex flex-col bg-white overflow-hidden">
-      {/* Header */}
-      <div className="px-6 py-4 border-b flex items-center justify-between">
+  const handleSave = async () => {
+    if (!data || saving) return;
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    const { business, settings } = data;
+
+    try {
+      const response = await api.updateBusinessSettings({
+        business: {
+          name: business.name.trim(),
+          ownerName: business.ownerName.trim(),
+          email: emptyToNull(business.email ?? ""),
+          phone: emptyToNull(business.phone ?? ""),
+          gstin: emptyToNull(business.gstin ?? ""),
+          address: emptyToNull(business.address ?? ""),
+          city: emptyToNull(business.city ?? ""),
+          state: emptyToNull(business.state ?? ""),
+          financialYearStart: Number(business.financialYearStart),
+        },
+        settings: {
+          invoicePrefix: settings.invoicePrefix.trim(),
+          invoiceNextNumber: Number(settings.invoiceNextNumber),
+          quotationPrefix: settings.quotationPrefix.trim(),
+          quotationNextNumber: Number(settings.quotationNextNumber),
+          challanPrefix: settings.challanPrefix.trim(),
+          challanNextNumber: Number(settings.challanNextNumber),
+          purchasePrefix: settings.purchasePrefix.trim(),
+          purchaseNextNumber: Number(settings.purchaseNextNumber),
+          defaultTaxRate: Number(settings.defaultTaxRate),
+          currency: settings.currency.trim().toUpperCase(),
+          currencySymbol: settings.currencySymbol.trim(),
+          decimalPlaces: Number(settings.decimalPlaces),
+          termsAndConditions: settings.termsAndConditions?.trim() || null,
+          bankName: emptyToNull(settings.bankName ?? ""),
+          bankAccountNumber: emptyToNull(settings.bankAccountNumber ?? ""),
+          bankIfsc: emptyToNull(settings.bankIfsc ?? ""),
+          bankBranch: emptyToNull(settings.bankBranch ?? ""),
+          upiId: emptyToNull(settings.upiId ?? ""),
+          invoiceTemplate: settings.invoiceTemplate,
+        },
+      });
+
+      if (!response.success) {
+        throw new Error("The server did not confirm the settings update.");
+      }
+
+      setMessage("Settings saved successfully.");
+      await loadSettings();
+    } catch (err) {
+      const detail =
+        err instanceof ApiError || err instanceof Error
+          ? err.message
+          : "Unable to save settings.";
+
+      setError(detail);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 p-8 text-sm text-gray-500">
+        Loading saved business settings…
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="flex-1 p-6">
         <h1 className="text-xl font-semibold text-gray-800">Settings</h1>
+        <p role="alert" className="mt-4 text-sm text-red-600">
+          {error || "Business settings could not be loaded."}
+        </p>
         <button
-          onClick={handleSave}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-1.5 rounded-md text-sm font-medium"
+          type="button"
+          onClick={() => void loadSettings()}
+          className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
         >
-          Save Changes
+          Retry
         </button>
       </div>
+    );
+  }
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Tabs */}
-        <div className="w-56 border-r bg-gray-50 p-4 space-y-1">
+  const { business, settings } = data;
+
+  const field = (
+    label: string,
+    value: string | number,
+    onChange: (value: string) => void,
+    options?: {
+      type?: string;
+      placeholder?: string;
+      min?: number;
+      max?: number;
+    },
+  ) => (
+    <label className={labelClass}>
+      {label}
+      <input
+        className={inputClass}
+        type={options?.type ?? "text"}
+        value={value ?? ""}
+        placeholder={options?.placeholder}
+        min={options?.min}
+        max={options?.max}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+
+  return (
+    <div className="flex min-h-full flex-1 flex-col bg-white">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-800">Settings</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Manage your saved business and invoice preferences.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={saving}
+          className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {saving ? "Saving…" : "Save Changes"}
+        </button>
+      </header>
+
+      <div className="border-b px-6 pt-3">
+        {error && (
+          <p role="alert" className="mb-3 text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        {message && (
+          <p role="status" className="mb-3 text-sm text-green-700">
+            {message}
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col md:flex-row">
+        <nav
+          aria-label="Settings sections"
+          className="flex gap-1 overflow-x-auto border-b bg-gray-50 p-3 md:w-56 md:shrink-0 md:flex-col md:border-b-0 md:border-r"
+        >
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+              type="button"
+              onClick={() => {
+                setActiveTab(tab.id);
+                setError("");
+                setMessage("");
+              }}
+              className={`shrink-0 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition ${
                 activeTab === tab.id
                   ? "bg-blue-600 text-white"
                   : "text-gray-600 hover:bg-gray-200"
@@ -75,294 +301,240 @@ export default function SettingsPage() {
               {tab.label}
             </button>
           ))}
-        </div>
+        </nav>
 
-        {/* Right Content */}
-        <div className="flex-1 overflow-auto p-6">
-          {/* ========== COMPANY PROFILE ========== */}
+        <main className="min-w-0 flex-1 p-5 md:p-6">
           {activeTab === "company" && (
-            <div className="max-w-2xl space-y-5">
-              <h2 className="text-lg font-semibold mb-4">Company Profile</h2>
-
-              <div>
-                <label className="text-sm text-gray-600">Company Name</label>
-                <input
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+            <section className="max-w-3xl space-y-5">
+              <h2 className="text-lg font-semibold">Company Profile</h2>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {field("Company Name", business.name, (v) =>
+                  updateBusiness("name", v),
+                )}
+                {field("Owner Name", business.ownerName, (v) =>
+                  updateBusiness("ownerName", v),
+                )}
+                {field("Phone", business.phone ?? "", (v) =>
+                  updateBusiness("phone", v),
+                )}
+                {field("Email", business.email ?? "", (v) =>
+                  updateBusiness("email", v),
+                )}
+                {field("GSTIN", business.gstin ?? "", (v) =>
+                  updateBusiness("gstin", v.toUpperCase()),
+                )}
+                {field("City", business.city ?? "", (v) =>
+                  updateBusiness("city", v),
+                )}
+                {field("State", business.state ?? "", (v) =>
+                  updateBusiness("state", v),
+                )}
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm text-gray-600">Phone</label>
-                  <input
-                    type="text"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-600">Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-600">GSTIN</label>
-                <input
-                  type="text"
-                  value={gstin}
-                  onChange={(e) => setGstin(e.target.value.toUpperCase())}
-                  placeholder="Enter GSTIN if applicable"
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-600">Address</label>
+              <label className={labelClass}>
+                Business Address
                 <textarea
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  className={inputClass}
                   rows={3}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={business.address ?? ""}
+                  onChange={(e) => updateBusiness("address", e.target.value)}
                 />
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-600">State</label>
-                <input
-                  type="text"
-                  value={state}
-                  onChange={(e) => setState(e.target.value)}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-            </div>
+              </label>
+            </section>
           )}
 
-          {/* ========== INVOICE SETTINGS ========== */}
           {activeTab === "invoice" && (
-            <div className="max-w-2xl space-y-5">
-              <h2 className="text-lg font-semibold mb-4">Invoice Settings</h2>
+            <section className="max-w-3xl space-y-5">
+              <h2 className="text-lg font-semibold">Invoice Settings</h2>
+              <p className="text-sm text-gray-500">
+                These are numbering defaults. Existing invoices are not
+                renumbered by changing them.
+              </p>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm text-gray-600">Invoice Prefix</label>
-                  <input
-                    type="text"
-                    value={invoicePrefix}
-                    onChange={(e) => setInvoicePrefix(e.target.value)}
-                    className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-600">Next Invoice No.</label>
-                  <input
-                    type="text"
-                    value={nextInvoiceNo}
-                    onChange={(e) => setNextInvoiceNo(e.target.value)}
-                    className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {field("Invoice Prefix", settings.invoicePrefix, (v) =>
+                  updateSetting("invoicePrefix", v),
+                )}
+                {field(
+                  "Next Invoice Number",
+                  settings.invoiceNextNumber,
+                  (v) => updateSetting("invoiceNextNumber", v),
+                  { type: "number", min: 1 },
+                )}
+                {field("Quotation Prefix", settings.quotationPrefix, (v) =>
+                  updateSetting("quotationPrefix", v),
+                )}
+                {field(
+                  "Next Quotation Number",
+                  settings.quotationNextNumber,
+                  (v) => updateSetting("quotationNextNumber", v),
+                  { type: "number", min: 1 },
+                )}
+                {field("Delivery Challan Prefix", settings.challanPrefix, (v) =>
+                  updateSetting("challanPrefix", v),
+                )}
+                {field(
+                  "Next Challan Number",
+                  settings.challanNextNumber,
+                  (v) => updateSetting("challanNextNumber", v),
+                  { type: "number", min: 1 },
+                )}
+                {field("Purchase Prefix", settings.purchasePrefix, (v) =>
+                  updateSetting("purchasePrefix", v),
+                )}
+                {field(
+                  "Next Purchase Number",
+                  settings.purchaseNextNumber,
+                  (v) => updateSetting("purchaseNextNumber", v),
+                  { type: "number", min: 1 },
+                )}
               </div>
 
-              <div>
-                <label className="text-sm text-gray-600">
-                  Default Terms & Conditions
-                </label>
+              <label className={labelClass}>
+                Default Terms & Conditions
                 <textarea
-                  value={terms}
-                  onChange={(e) => setTerms(e.target.value)}
-                  rows={3}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className={inputClass}
+                  rows={4}
+                  value={settings.termsAndConditions ?? ""}
+                  onChange={(e) =>
+                    updateSetting("termsAndConditions", e.target.value)
+                  }
                 />
-              </div>
-
-              <div className="space-y-3">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showSignature}
-                    onChange={(e) => setShowSignature(e.target.checked)}
-                    className="accent-blue-600 w-4 h-4"
-                  />
-                  <span className="text-sm">Show signature on invoice</span>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showBankDetails}
-                    onChange={(e) => setShowBankDetails(e.target.checked)}
-                    className="accent-blue-600 w-4 h-4"
-                  />
-                  <span className="text-sm">Show bank details on invoice</span>
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* ========== TAX & GST ========== */}
-          {activeTab === "tax" && (
-            <div className="max-w-2xl space-y-5">
-              <h2 className="text-lg font-semibold mb-4">Tax & GST Settings</h2>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enableGst}
-                  onChange={(e) => setEnableGst(e.target.checked)}
-                  className="accent-blue-600 w-4 h-4"
-                />
-                <span className="text-sm font-medium">Enable GST</span>
               </label>
 
-              {enableGst && (
-                <div>
-                  <label className="text-sm text-gray-600">
-                    Default Tax Rate (%)
-                  </label>
-                  <select
-                    value={defaultTaxRate}
-                    onChange={(e) => setDefaultTaxRate(e.target.value)}
-                    className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="0">0%</option>
-                    <option value="5">5%</option>
-                    <option value="12">12%</option>
-                    <option value="18">18%</option>
-                    <option value="28">28%</option>
-                  </select>
+              <div className="border-t pt-5">
+                <h3 className="mb-4 font-semibold">Invoice Bank Details</h3>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {field("Bank Name", settings.bankName ?? "", (v) =>
+                    updateSetting("bankName", v),
+                  )}
+                  {field(
+                    "Bank Account Number",
+                    settings.bankAccountNumber ?? "",
+                    (v) => updateSetting("bankAccountNumber", v),
+                  )}
+                  {field("IFSC", settings.bankIfsc ?? "", (v) =>
+                    updateSetting("bankIfsc", v.toUpperCase()),
+                  )}
+                  {field("Bank Branch", settings.bankBranch ?? "", (v) =>
+                    updateSetting("bankBranch", v),
+                  )}
+                  {field("UPI ID", settings.upiId ?? "", (v) =>
+                    updateSetting("upiId", v),
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            </section>
           )}
 
-          {/* ========== USERS ========== */}
-          {activeTab === "users" && (
-            <div className="max-w-2xl">
-              <h2 className="text-lg font-semibold mb-4">Users & Permissions</h2>
-
-              <div className="border rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b text-left text-gray-500">
-                      <th className="py-3 px-4">User</th>
-                      <th className="py-3 px-4">Role</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b">
-                      <td className="py-3 px-4">
-                        <div className="font-medium">Admin</div>
-                        <div className="text-xs text-gray-500">
-                          surebuystore@gmail.com
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">Owner</td>
-                      <td className="py-3 px-4">
-                        <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full">
-                          Active
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button className="text-blue-600 text-sm hover:underline">
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <button className="mt-4 border border-blue-600 text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-md text-sm font-medium">
-                + Add New User
-              </button>
-            </div>
+          {activeTab === "tax" && (
+            <section className="max-w-2xl space-y-5">
+              <h2 className="text-lg font-semibold">Tax & GST Settings</h2>
+              <p className="text-sm text-gray-500">
+                This updates the saved default tax rate. It does not recalculate
+                taxes on previously saved transactions.
+              </p>
+              <label className={labelClass}>
+                Default Tax Rate (%)
+                <select
+                  className={inputClass}
+                  value={String(settings.defaultTaxRate)}
+                  onChange={(e) =>
+                    updateSetting("defaultTaxRate", Number(e.target.value))
+                  }
+                >
+                  <option value="0">0%</option>
+                  <option value="5">5%</option>
+                  <option value="12">12%</option>
+                  <option value="18">18%</option>
+                  <option value="28">28%</option>
+                </select>
+              </label>
+            </section>
           )}
 
-          {/* ========== BACKUP ========== */}
-          {activeTab === "backup" && (
-            <div className="max-w-2xl space-y-6">
-              <h2 className="text-lg font-semibold mb-4">Backup & Restore</h2>
-
-              <div className="border rounded-xl p-5">
-                <h3 className="font-medium mb-2">Create Backup</h3>
-                <p className="text-sm text-gray-500 mb-4">
-                  Download a complete backup of all your business data.
-                </p>
-                <button className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium">
-                  📥 Download Backup
-                </button>
-              </div>
-
-              <div className="border rounded-xl p-5">
-                <h3 className="font-medium mb-2">Restore Backup</h3>
-                <p className="text-sm text-gray-500 mb-4">
-                  Upload a previously downloaded backup file to restore data.
-                </p>
-                <button className="border border-gray-300 hover:bg-gray-50 px-5 py-2 rounded-md text-sm font-medium">
-                  📤 Upload Backup File
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ========== GENERAL ========== */}
           {activeTab === "general" && (
-            <div className="max-w-2xl space-y-5">
-              <h2 className="text-lg font-semibold mb-4">General Settings</h2>
+            <section className="max-w-2xl space-y-5">
+              <h2 className="text-lg font-semibold">General Settings</h2>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className={labelClass}>
+                  Currency
+                  <select
+                    className={inputClass}
+                    value={settings.currency}
+                    onChange={(e) => {
+                      const currency = e.target.value;
+                      updateSetting("currency", currency);
+                      updateSetting(
+                        "currencySymbol",
+                        currency === "INR" ? "₹" : "$",
+                      );
+                    }}
+                  >
+                    <option value="INR">INR — Indian Rupee</option>
+                    <option value="USD">USD — US Dollar</option>
+                  </select>
+                </label>
 
-              <div>
-                <label className="text-sm text-gray-600">Currency</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="INR">INR - Indian Rupee</option>
-                  <option value="USD">USD - US Dollar</option>
-                </select>
-              </div>
+                {field(
+                  "Decimal Places",
+                  settings.decimalPlaces,
+                  (v) => updateSetting("decimalPlaces", Number(v)),
+                  { type: "number", min: 0, max: 4 },
+                )}
 
-              <div>
-                <label className="text-sm text-gray-600">Date Format</label>
-                <select
-                  value={dateFormat}
-                  onChange={(e) => setDateFormat(e.target.value)}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                </select>
+                <label className={labelClass}>
+                  Financial Year Starts
+                  <select
+                    className={inputClass}
+                    value={String(business.financialYearStart)}
+                    onChange={(e) =>
+                      updateBusiness(
+                        "financialYearStart",
+                        Number(e.target.value),
+                      )
+                    }
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map(
+                      (month) => (
+                        <option key={month} value={month}>
+                          {new Date(2000, month - 1, 1).toLocaleString(
+                            "en-IN",
+                            { month: "long" },
+                          )}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
               </div>
-
-              <div>
-                <label className="text-sm text-gray-600">Financial Year</label>
-                <select
-                  value={financialYear}
-                  onChange={(e) => setFinancialYear(e.target.value)}
-                  className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="2024-25">2024-25</option>
-                  <option value="2025-26">2025-26</option>
-                  <option value="2026-27">2026-27</option>
-                </select>
-              </div>
-            </div>
+            </section>
           )}
-        </div>
+
+          {activeTab === "users" && (
+            <section className="max-w-2xl rounded-xl border border-amber-200 bg-amber-50 p-5">
+              <h2 className="font-semibold text-gray-800">
+                Users & Permissions
+              </h2>
+              <p className="mt-2 text-sm text-gray-700">
+                User listing, invitations, and permission editing are not
+                connected to this settings screen yet. No sample users or
+                pretend actions are shown here.
+              </p>
+            </section>
+          )}
+
+          {activeTab === "backup" && (
+            <section className="max-w-2xl rounded-xl border border-amber-200 bg-amber-50 p-5">
+              <h2 className="font-semibold text-gray-800">Backup & Restore</h2>
+              <p className="mt-2 text-sm text-gray-700">
+                A complete business-data export and a validated restore process
+                have not been implemented yet. Backup and restore controls are
+                intentionally unavailable to avoid implying that data has been
+                backed up or restored.
+              </p>
+            </section>
+          )}
+        </main>
       </div>
     </div>
   );

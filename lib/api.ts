@@ -146,6 +146,69 @@ export const api = {
   me: () => request<ApiSuccess<any>>("/auth/me"),
 
   /* =======================================================
+     BUSINESS SETTINGS
+  ======================================================= */
+
+  businessSettings: () =>
+    request<
+      ApiSuccess<{
+        business: {
+          id: string;
+          name: string;
+          ownerName: string;
+          email: string | null;
+          phone: string | null;
+          gstin: string | null;
+          pan: string | null;
+          address: string | null;
+          city: string | null;
+          state: string | null;
+          pinCode: string | null;
+          country: string;
+          financialYearStart: number;
+          logoUrl: string | null;
+          signatureUrl: string | null;
+          updatedAt: string;
+        };
+        settings: {
+          invoicePrefix: string;
+          invoiceNextNumber: number;
+          quotationPrefix: string;
+          quotationNextNumber: number;
+          challanPrefix: string;
+          challanNextNumber: number;
+          purchasePrefix: string;
+          purchaseNextNumber: number;
+          defaultTaxRate: number | string;
+          currency: string;
+          currencySymbol: string;
+          decimalPlaces: number;
+          termsAndConditions: string | null;
+          bankName: string | null;
+          bankAccountNumber: string | null;
+          bankIfsc: string | null;
+          bankBranch: string | null;
+          upiId: string | null;
+          invoiceTemplate: string;
+        };
+      }>
+    >("/business-settings"),
+
+  updateBusinessSettings: (data: {
+    business?: Record<string, unknown>;
+    settings?: Record<string, unknown>;
+  }) =>
+    request<
+      ApiSuccess<{
+        business: Record<string, unknown>;
+        settings: Record<string, unknown> | null;
+      }>
+    >("/business-settings", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  /* =======================================================
      DASHBOARD
   ======================================================= */
 
@@ -546,15 +609,11 @@ export const api = {
   reportExpense: (params?: Record<string, QueryValue>) =>
     request<ApiSuccess<any>>(`/reports/expense${buildQuery(params)}`),
 
-
-
   /* =======================================================
      OTHER INCOME
   ======================================================= */
 
-  otherIncomes: (
-    params?: Record<string, QueryValue>,
-  ) =>
+  otherIncomes: (params?: Record<string, QueryValue>) =>
     request<
       PaginatedResponse<any> & {
         summary?: {
@@ -565,9 +624,7 @@ export const api = {
     >(`/other-income${buildQuery(params)}`),
 
   otherIncome: (id: string) =>
-    request<ApiSuccess<any>>(
-      `/other-income/${encodeURIComponent(id)}`,
-    ),
+    request<ApiSuccess<any>>(`/other-income/${encodeURIComponent(id)}`),
 
   createOtherIncome: (data: {
     amount: number;
@@ -597,38 +654,25 @@ export const api = {
       bankAccountId: string | null;
     }>,
   ) =>
-    request<ApiSuccess<any>>(
-      `/other-income/${encodeURIComponent(id)}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      },
-    ),
+    request<ApiSuccess<any>>(`/other-income/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
 
   deleteOtherIncome: (id: string) =>
-    request<ApiSuccess<any>>(
-      `/other-income/${encodeURIComponent(id)}`,
-      {
-        method: "DELETE",
-      },
-    ),
-
+    request<ApiSuccess<any>>(`/other-income/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   /* =======================================================
      PURCHASE RETURNS
   ======================================================= */
 
-  purchaseReturns: (
-    params?: Record<string, QueryValue>,
-  ) =>
-    request<
-      PaginatedResponse<any>
-    >(`/purchase-returns${buildQuery(params)}`),
+  purchaseReturns: (params?: Record<string, QueryValue>) =>
+    request<PaginatedResponse<any>>(`/purchase-returns${buildQuery(params)}`),
 
   purchaseReturn: (id: string) =>
-    request<ApiSuccess<any>>(
-      `/purchase-returns/${encodeURIComponent(id)}`,
-    ),
+    request<ApiSuccess<any>>(`/purchase-returns/${encodeURIComponent(id)}`),
 
   createPurchaseReturn: (data: {
     purchaseId?: string | null;
@@ -647,7 +691,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-
 };
 
 /* =========================================================
