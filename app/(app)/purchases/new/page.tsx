@@ -21,6 +21,7 @@ type InventoryItem = {
   gstRate?: number | string | null;
   hsnSac?: string | null;
   status?: string;
+  trackSerial?: boolean;
   unit?: string | { shortName?: string | null } | null;
 };
 
@@ -29,7 +30,9 @@ type PurchaseRow = {
   itemId: string;
   name: string;
   itemCode: string;
-  imei: string;
+  serialNumbersText: string;
+  imeisText: string;
+  trackSerial: boolean;
   qty: number;
   unit: string;
   price: number;
@@ -54,12 +57,21 @@ const money = (value: number) =>
     maximumFractionDigits: 2,
   })}`;
 
+function parseIdentifiers(value: string): string[] {
+  return value
+    .split(/[\n,;]+/)
+    .map((identifier) => identifier.trim())
+    .filter(Boolean);
+}
+
 const newRow = (): PurchaseRow => ({
   id: crypto.randomUUID(),
   itemId: "",
   name: "",
   itemCode: "",
-  imei: "",
+  serialNumbersText: "",
+  imeisText: "",
+  trackSerial: false,
   qty: 1,
   unit: "PCS",
   price: 0,
@@ -72,14 +84,13 @@ function rowTotals(row: PurchaseRow) {
   const quantity = Math.max(0, Number(row.qty) || 0);
   const rate = Math.max(0, Number(row.price) || 0);
   const gross = quantity * rate;
+
   const discountPercent = Math.min(
     100,
     Math.max(0, Number(row.discountPercent) || 0),
   );
-  const discount = Math.min(
-    gross,
-    gross * (discountPercent / 100),
-  );
+
+  const discount = Math.min(gross, gross * (discountPercent / 100));
   const taxable = Math.max(0, gross - discount);
   const gstRate = Math.max(0, Number(row.tax) || 0);
   const gst = taxable * (gstRate / 100);
@@ -106,14 +117,17 @@ export default function NewPurchasePage() {
   const [paymentType, setPaymentType] = useState("CASH");
   const [referenceNo, setReferenceNo] = useState("");
   const [paid, setPaid] = useState(true);
+
   const [purchaseDate, setPurchaseDate] = useState(() => {
     const date = new Date();
+
     return [
       date.getFullYear(),
       String(date.getMonth() + 1).padStart(2, "0"),
       String(date.getDate()).padStart(2, "0"),
     ].join("-");
   });
+
   const [rows, setRows] = useState<PurchaseRow[]>([newRow()]);
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -168,31 +182,31 @@ export default function NewPurchasePage() {
     };
   }, []);
 
-  const totals = useMemo(() => {
-    return rows.reduce(
-      (result, row) => {
-        const line = rowTotals(row);
-        result.quantity += Math.max(0, Number(row.qty) || 0);
-        result.subtotal += line.gross;
-        result.discount += line.discount;
-        result.taxable += line.taxable;
-        result.gst += line.gst;
-        result.total += line.total;
-        return result;
-      },
-      {
-        quantity: 0,
-        subtotal: 0,
-        discount: 0,
-        taxable: 0,
-        gst: 0,
-        total: 0,
-      },
-    );
-  }, [rows]);
+  const totals = useMemo(
+    () =>
+      rows.reduce(
+        (result, row) => {
+          const line = rowTotals(row);
 
-  const selectedSupplier = suppliers.find(
-    (supplier) => supplier.id === supplierId,
+          result.quantity += Math.max(0, Number(row.qty) || 0);
+          result.subtotal += line.gross;
+          result.discount += line.discount;
+          result.taxable += line.taxable;
+          result.gst += line.gst;
+          result.total += line.total;
+
+          return result;
+        },
+        {
+          quantity: 0,
+          subtotal: 0,
+          discount: 0,
+          taxable: 0,
+          gst: 0,
+          total: 0,
+        },
+      ),
+    [rows],
   );
 
   const updateRow = useCallback(
@@ -203,22 +217,40 @@ export default function NewPurchasePage() {
 
           const updated = { ...row, [field]: value };
 
-          if (field === "name") {
-            const selected = inventory.find(
+          const findByName = (name: string) =>
+            inventory.find(
               (item) =>
-                item.name.toLowerCase() === String(value).trim().toLowerCase(),
+                item.name.toLowerCase() === name.trim().toLowerCase(),
             );
 
-            updated.itemId = selected?.id ?? "";
-            updated.itemCode = selected?.sku ?? "";
-            updated.price = Number(selected?.purchasePrice ?? 0);
-            updated.tax = String(Number(selected?.gstRate ?? 0));
+          const applyItem = (item: InventoryItem | undefined) => {
+            if (!item) return;
 
-            const unit = selected?.unit;
+            updated.itemId = item.id;
+            updated.name = item.name;
+            updated.itemCode = item.sku ?? "";
+            updated.price = Number(item.purchasePrice ?? 0);
+            updated.tax = String(Number(item.gstRate ?? 0));
+            updated.trackSerial = Boolean(item.trackSerial);
+
+            const unit = item.unit;
+
             updated.unit =
               typeof unit === "string"
                 ? unit || "PCS"
                 : unit?.shortName || "PCS";
+          };
+
+          if (field === "name") {
+            const selected = findByName(String(value));
+
+            if (selected) {
+              applyItem(selected);
+            } else {
+              updated.itemId = "";
+              updated.itemCode = "";
+              updated.trackSerial = false;
+            }
           }
 
           if (field === "itemCode") {
@@ -228,21 +260,22 @@ export default function NewPurchasePage() {
                 String(value).trim().toLowerCase(),
             );
 
-            if (selected) {
-              updated.itemId = selected.id;
-              updated.name = selected.name;
-              updated.price = Number(selected.purchasePrice ?? 0);
-              updated.tax = String(Number(selected.gstRate ?? 0));
-            }
+            if (selected) applyItem(selected);
           }
 
-          if (field === "discountPercent") {
+          if (field === "qty" || field === "price" || field === "discountPercent") {
+            const gross =
+              Math.max(0, Number(updated.qty) || 0) *
+              Math.max(0, Number(updated.price) || 0);
+
             updated.discountAmount = Number(
               (
-                (Math.max(0, Number(updated.qty) || 0) *
-                  Math.max(0, Number(updated.price) || 0) *
-                  Math.min(100, Math.max(0, Number(value) || 0))) /
-                100
+                gross *
+                (Math.min(
+                  100,
+                  Math.max(0, Number(updated.discountPercent) || 0),
+                ) /
+                  100)
               ).toFixed(2),
             );
           }
@@ -274,7 +307,10 @@ export default function NewPurchasePage() {
       return;
     }
 
-    if (!purchaseDate || Number.isNaN(new Date(`${purchaseDate}T12:00:00`).getTime())) {
+    if (
+      !purchaseDate ||
+      Number.isNaN(new Date(`${purchaseDate}T12:00:00`).getTime())
+    ) {
       setSaveError("Enter a valid purchase date.");
       return;
     }
@@ -286,23 +322,90 @@ export default function NewPurchasePage() {
       return;
     }
 
+    const allSerialNumbers = new Set<string>();
+    const allImeis = new Set<string>();
+
     for (const row of validRows) {
-      if (!Number.isFinite(row.qty) || row.qty <= 0) {
-        setSaveError(`Quantity for "${row.name}" must be greater than zero.`);
+      const name = row.name.trim();
+      const quantity = Number(row.qty);
+      const price = Number(row.price);
+      const discount = Number(row.discountPercent);
+
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        setSaveError(`Quantity for "${name}" must be greater than zero.`);
         return;
       }
 
-      if (!Number.isFinite(row.price) || row.price < 0) {
-        setSaveError(`Price for "${row.name}" cannot be negative.`);
+      if (!Number.isFinite(price) || price < 0) {
+        setSaveError(`Price for "${name}" cannot be negative.`);
         return;
       }
 
-      if (
-        !Number.isFinite(row.discountPercent) ||
-        row.discountPercent < 0 ||
-        row.discountPercent > 100
-      ) {
-        setSaveError(`Discount for "${row.name}" must be between 0% and 100%.`);
+      if (!Number.isFinite(discount) || discount < 0 || discount > 100) {
+        setSaveError(
+          `Discount for "${name}" must be between 0% and 100%.`,
+        );
+        return;
+      }
+
+      const serialNumbers = parseIdentifiers(row.serialNumbersText);
+      const imeis = parseIdentifiers(row.imeisText);
+
+      if (row.trackSerial) {
+        if (!Number.isInteger(quantity)) {
+          setSaveError(
+            `Quantity for serial-tracked item "${name}" must be a whole number.`,
+          );
+          return;
+        }
+
+        if (serialNumbers.length === 0 && imeis.length === 0) {
+          setSaveError(
+            `Enter a serial number or IMEI for every unit of "${name}".`,
+          );
+          return;
+        }
+
+        if (
+          (serialNumbers.length > 0 && serialNumbers.length !== quantity) ||
+          (imeis.length > 0 && imeis.length !== quantity)
+        ) {
+          setSaveError(
+            `"${name}" has quantity ${quantity}. Provide exactly ${quantity} serial numbers or exactly ${quantity} IMEIs. If you provide both types, each list must contain ${quantity} identifiers.`,
+          );
+          return;
+        }
+
+        for (const imei of imeis) {
+          if (!/^\d{15}$/.test(imei)) {
+            setSaveError(
+              `Each IMEI for "${name}" must contain exactly 15 digits.`,
+            );
+            return;
+          }
+
+          if (allImeis.has(imei)) {
+            setSaveError(`IMEI "${imei}" is duplicated in this purchase.`);
+            return;
+          }
+
+          allImeis.add(imei);
+        }
+
+        for (const serialNumber of serialNumbers) {
+          if (allSerialNumbers.has(serialNumber)) {
+            setSaveError(
+              `Serial number "${serialNumber}" is duplicated in this purchase.`,
+            );
+            return;
+          }
+
+          allSerialNumbers.add(serialNumber);
+        }
+      } else if (serialNumbers.length > 0 || imeis.length > 0) {
+        setSaveError(
+          `"${name}" is not configured for serial tracking. Remove its IMEIs and serial numbers or enable serial tracking in the item settings.`,
+        );
         return;
       }
     }
@@ -329,17 +432,29 @@ export default function NewPurchasePage() {
       paymentMethod: PAYMENT_METHODS[paymentType] ?? "cash",
       paidAmount: paid ? invoiceTotal : 0,
       notes,
-      items: validRows.map((row) => ({
-        ...(row.itemId ? { itemId: row.itemId } : {}),
-        itemName: row.name.trim(),
-        hsnSac:
-          inventory.find((item) => item.id === row.itemId)?.hsnSac ?? "",
-        quantity: Number(row.qty),
-        unit: row.unit === "NONE" ? "" : row.unit,
-        rate: Number(row.price),
-        discountPercent: Number(row.discountPercent),
-        gstRate: Number(row.tax) || 0,
-      })),
+      items: validRows.map((row) => {
+        const serialNumbers = parseIdentifiers(row.serialNumbersText);
+        const imeis = parseIdentifiers(row.imeisText);
+
+        const item = inventory.find((entry) => entry.id === row.itemId);
+
+        return {
+          ...(row.itemId ? { itemId: row.itemId } : {}),
+          itemName: row.name.trim(),
+          hsnSac: item?.hsnSac ?? "",
+          quantity: Number(row.qty),
+          unit: row.unit === "NONE" ? "" : row.unit,
+          rate: Number(row.price),
+          discountPercent: Number(row.discountPercent),
+          gstRate: Number(row.tax) || 0,
+          ...(row.trackSerial
+            ? {
+                ...(serialNumbers.length > 0 ? { serialNumbers } : {}),
+                ...(imeis.length > 0 ? { imeis } : {}),
+              }
+            : {}),
+        };
+      }),
     };
 
     setSaving(true);
@@ -360,20 +475,22 @@ export default function NewPurchasePage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-white min-h-full">
-      <div className="flex items-center justify-between px-6 py-4 border-b">
+    <div className="flex min-h-full flex-1 flex-col bg-white">
+      <div className="flex items-center justify-between border-b px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold text-gray-800">
             New Purchase
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="mt-1 text-sm text-gray-500">
             Record supplier purchases and update inventory.
           </p>
         </div>
+
         <button
           type="button"
           onClick={() => router.push("/purchases")}
-          className="border rounded-md px-4 py-2 text-sm hover:bg-gray-50"
+          disabled={saving}
+          className="rounded-md border px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
         >
           Cancel
         </button>
@@ -394,7 +511,7 @@ export default function NewPurchasePage() {
         </div>
       )}
 
-      <div className="px-6 py-5 grid grid-cols-1 md:grid-cols-4 gap-5 border-b">
+      <div className="grid grid-cols-1 gap-5 border-b px-6 py-5 md:grid-cols-4">
         <div>
           <label className="text-xs font-medium text-gray-500">
             Supplier *
@@ -406,13 +523,12 @@ export default function NewPurchasePage() {
               const selected = suppliers.find(
                 (supplier) => supplier.id === event.target.value,
               );
+
               setSupplierId(selected?.id ?? "");
-              setBillingName(
-                selected?.businessName || selected?.name || "",
-              );
+              setBillingName(selected?.businessName || selected?.name || "");
               setPhone(selected?.phone ?? "");
             }}
-            className="w-full border rounded-md px-3 py-2 mt-1 text-sm"
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
           >
             <option value="">
               {loadingOptions ? "Loading suppliers..." : "Select supplier"}
@@ -423,6 +539,7 @@ export default function NewPurchasePage() {
               </option>
             ))}
           </select>
+
           {!loadingOptions && suppliers.length === 0 && (
             <p className="mt-1 text-xs text-amber-700">
               No active suppliers found. Add a supplier first.
@@ -437,7 +554,8 @@ export default function NewPurchasePage() {
           <input
             value={billingName}
             onChange={(event) => setBillingName(event.target.value)}
-            className="w-full border rounded-md px-3 py-2 mt-1 text-sm"
+            disabled={saving}
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
           />
         </div>
 
@@ -448,7 +566,8 @@ export default function NewPurchasePage() {
           <input
             value={phone}
             onChange={(event) => setPhone(event.target.value)}
-            className="w-full border rounded-md px-3 py-2 mt-1 text-sm"
+            disabled={saving}
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
           />
         </div>
 
@@ -456,10 +575,11 @@ export default function NewPurchasePage() {
           <label className="text-xs font-medium text-gray-500">
             Invoice Number
           </label>
-          <div className="border rounded-md px-3 py-2 mt-1 text-sm text-gray-500 bg-gray-50">
+          <div className="mt-1 rounded-md border bg-gray-50 px-3 py-2 text-sm text-gray-500">
             Generated by server
           </div>
-          <label className="block text-xs font-medium text-gray-500 mt-3">
+
+          <label className="mt-3 block text-xs font-medium text-gray-500">
             Invoice Date *
           </label>
           <input
@@ -467,12 +587,13 @@ export default function NewPurchasePage() {
             value={purchaseDate}
             max={new Date().toLocaleDateString("en-CA")}
             onChange={(event) => setPurchaseDate(event.target.value)}
-            className="w-full border rounded-md px-3 py-2 mt-1 text-sm"
+            disabled={saving}
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
           />
         </div>
       </div>
 
-      <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-5 border-b">
+      <div className="grid grid-cols-1 gap-5 border-b px-6 py-4 md:grid-cols-2">
         <div>
           <label className="text-xs font-medium text-gray-500">
             Billing Address
@@ -480,10 +601,12 @@ export default function NewPurchasePage() {
           <textarea
             value={billingAddress}
             onChange={(event) => setBillingAddress(event.target.value)}
+            disabled={saving}
             rows={2}
-            className="w-full border rounded-md px-3 py-2 mt-1 text-sm"
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
           />
         </div>
+
         <div>
           <label className="text-xs font-medium text-gray-500">
             Shipping Address
@@ -491,45 +614,49 @@ export default function NewPurchasePage() {
           <textarea
             value={shippingAddress}
             onChange={(event) => setShippingAddress(event.target.value)}
+            disabled={saving}
             rows={2}
-            className="w-full border rounded-md px-3 py-2 mt-1 text-sm"
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
           />
         </div>
       </div>
 
-      <div className="px-6 py-5 overflow-x-auto">
-        <div className="flex items-center justify-between mb-4">
+      <div className="overflow-x-auto px-6 py-5">
+        <div className="mb-4 flex items-center justify-between">
           <h2 className="font-semibold text-gray-800">Purchase Items</h2>
           <button
             type="button"
             onClick={addRow}
-            className="text-sm font-medium text-blue-600 hover:text-blue-800"
+            disabled={saving}
+            className="text-sm font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
           >
             + Add item
           </button>
         </div>
 
-        <table className="w-full text-sm min-w-[1050px]">
+        <table className="w-full min-w-[1450px] text-sm">
           <thead>
             <tr className="border-b text-left text-gray-500">
               <th className="py-3 pr-2">Item</th>
-              <th className="py-3 px-2">Item Code</th>
-              <th className="py-3 px-2">IMEI / Serial</th>
-              <th className="py-3 px-2">Qty</th>
-              <th className="py-3 px-2">Unit</th>
-              <th className="py-3 px-2 text-right">Price</th>
-              <th className="py-3 px-2">Discount %</th>
-              <th className="py-3 px-2">GST</th>
+              <th className="px-2 py-3">Item Code</th>
+              <th className="px-2 py-3">IMEIs</th>
+              <th className="px-2 py-3">Serial Numbers</th>
+              <th className="px-2 py-3">Qty</th>
+              <th className="px-2 py-3">Unit</th>
+              <th className="px-2 py-3 text-right">Price</th>
+              <th className="px-2 py-3">Discount %</th>
+              <th className="px-2 py-3">GST</th>
               <th className="py-3 pl-2 text-right">Amount</th>
-              <th className="py-3 pl-2"></th>
+              <th className="py-3 pl-2" />
             </tr>
           </thead>
+
           <tbody>
             {rows.map((row) => {
               const line = rowTotals(row);
 
               return (
-                <tr key={row.id} className="border-b align-top">
+                <tr key={row.id} className="align-top border-b">
                   <td className="py-3 pr-2">
                     <input
                       list="purchase-inventory"
@@ -539,15 +666,23 @@ export default function NewPurchasePage() {
                         updateRow(row.id, "name", event.target.value)
                       }
                       placeholder="Type or select item"
-                      className="w-48 border rounded-md px-2 py-2"
+                      className="w-48 rounded-md border px-2 py-2"
                     />
+
                     {row.itemId && (
-                      <p className="text-xs text-green-700 mt-1">
+                      <p className="mt-1 text-xs text-green-700">
                         Existing inventory item
                       </p>
                     )}
+
+                    {row.trackSerial && (
+                      <p className="mt-1 text-xs font-medium text-indigo-700">
+                        Serial tracking enabled
+                      </p>
+                    )}
                   </td>
-                  <td className="py-3 px-2">
+
+                  <td className="px-2 py-3">
                     <input
                       list="purchase-skus"
                       value={row.itemCode}
@@ -556,21 +691,60 @@ export default function NewPurchasePage() {
                         updateRow(row.id, "itemCode", event.target.value)
                       }
                       placeholder="SKU"
-                      className="w-28 border rounded-md px-2 py-2"
+                      className="w-28 rounded-md border px-2 py-2"
                     />
                   </td>
-                  <td className="py-3 px-2">
-                    <input
-                      value={row.imei}
-                      disabled={saving}
+
+                  <td className="px-2 py-3">
+                    <textarea
+                      value={row.imeisText}
+                      disabled={saving || !row.trackSerial}
                       onChange={(event) =>
-                        updateRow(row.id, "imei", event.target.value)
+                        updateRow(row.id, "imeisText", event.target.value)
                       }
-                      placeholder="Optional"
-                      className="w-32 border rounded-md px-2 py-2"
+                      placeholder={
+                        row.trackSerial
+                          ? "One 15-digit IMEI per line or comma"
+                          : "Enable serial tracking first"
+                      }
+                      rows={3}
+                      className="w-56 rounded-md border px-2 py-2 disabled:bg-gray-100 disabled:text-gray-400"
                     />
+                    {row.trackSerial && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {parseIdentifiers(row.imeisText).length} IMEI(s)
+                      </p>
+                    )}
                   </td>
-                  <td className="py-3 px-2">
+
+                  <td className="px-2 py-3">
+                    <textarea
+                      value={row.serialNumbersText}
+                      disabled={saving || !row.trackSerial}
+                      onChange={(event) =>
+                        updateRow(
+                          row.id,
+                          "serialNumbersText",
+                          event.target.value,
+                        )
+                      }
+                      placeholder={
+                        row.trackSerial
+                          ? "One serial number per line or comma"
+                          : "Enable serial tracking first"
+                      }
+                      rows={3}
+                      className="w-56 rounded-md border px-2 py-2 disabled:bg-gray-100 disabled:text-gray-400"
+                    />
+                    {row.trackSerial && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {parseIdentifiers(row.serialNumbersText).length} serial
+                        number(s)
+                      </p>
+                    )}
+                  </td>
+
+                  <td className="px-2 py-3">
                     <input
                       type="number"
                       min="0.001"
@@ -580,20 +754,22 @@ export default function NewPurchasePage() {
                       onChange={(event) =>
                         updateRow(row.id, "qty", Number(event.target.value))
                       }
-                      className="w-20 border rounded-md px-2 py-2"
+                      className="w-20 rounded-md border px-2 py-2"
                     />
                   </td>
-                  <td className="py-3 px-2">
+
+                  <td className="px-2 py-3">
                     <input
                       value={row.unit}
                       disabled={saving}
                       onChange={(event) =>
                         updateRow(row.id, "unit", event.target.value)
                       }
-                      className="w-20 border rounded-md px-2 py-2"
+                      className="w-20 rounded-md border px-2 py-2"
                     />
                   </td>
-                  <td className="py-3 px-2">
+
+                  <td className="px-2 py-3">
                     <input
                       type="number"
                       min="0"
@@ -603,10 +779,11 @@ export default function NewPurchasePage() {
                       onChange={(event) =>
                         updateRow(row.id, "price", Number(event.target.value))
                       }
-                      className="w-28 border rounded-md px-2 py-2 text-right"
+                      className="w-28 rounded-md border px-2 py-2 text-right"
                     />
                   </td>
-                  <td className="py-3 px-2">
+
+                  <td className="px-2 py-3">
                     <input
                       type="number"
                       min="0"
@@ -621,17 +798,18 @@ export default function NewPurchasePage() {
                           Number(event.target.value),
                         )
                       }
-                      className="w-24 border rounded-md px-2 py-2"
+                      className="w-24 rounded-md border px-2 py-2"
                     />
                   </td>
-                  <td className="py-3 px-2">
+
+                  <td className="px-2 py-3">
                     <select
                       value={row.tax}
                       disabled={saving}
                       onChange={(event) =>
                         updateRow(row.id, "tax", event.target.value)
                       }
-                      className="border rounded-md px-2 py-2"
+                      className="rounded-md border px-2 py-2"
                     >
                       {TAX_OPTIONS.map((rate) => (
                         <option key={rate} value={rate}>
@@ -640,16 +818,18 @@ export default function NewPurchasePage() {
                       ))}
                     </select>
                   </td>
-                  <td className="py-3 pl-2 text-right font-medium whitespace-nowrap">
+
+                  <td className="whitespace-nowrap py-3 pl-2 text-right font-medium">
                     {money(line.total)}
                   </td>
+
                   <td className="py-3 pl-2">
                     <button
                       type="button"
                       onClick={() => removeRow(row.id)}
                       disabled={saving || rows.length === 1}
                       aria-label={`Remove ${row.name || "item row"}`}
-                      className="text-red-500 hover:text-red-700 disabled:opacity-30 text-xl"
+                      className="text-xl text-red-500 hover:text-red-700 disabled:opacity-30"
                     >
                       ×
                     </button>
@@ -665,6 +845,7 @@ export default function NewPurchasePage() {
             <option key={item.id} value={item.name} />
           ))}
         </datalist>
+
         <datalist id="purchase-skus">
           {inventory
             .filter((item) => item.sku)
@@ -675,8 +856,8 @@ export default function NewPurchasePage() {
             ))}
         </datalist>
 
-        <div className="flex justify-end mt-6">
-          <div className="w-full max-w-sm rounded-lg border bg-gray-50 p-4 space-y-3 text-sm">
+        <div className="mt-6 flex justify-end">
+          <div className="w-full max-w-sm space-y-3 rounded-lg border bg-gray-50 p-4 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-600">Total quantity</span>
               <span>{totals.quantity}</span>
@@ -701,7 +882,7 @@ export default function NewPurchasePage() {
         </div>
       </div>
 
-      <div className="border-t px-6 py-5 grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 gap-8 border-t px-6 py-5 md:grid-cols-2">
         <div>
           <label className="text-xs font-medium text-gray-500">
             Reference Number
@@ -710,35 +891,31 @@ export default function NewPurchasePage() {
             value={referenceNo}
             onChange={(event) => setReferenceNo(event.target.value)}
             disabled={saving}
-            className="w-full max-w-md border rounded-md px-3 py-2 mt-1 text-sm"
+            className="mt-1 w-full max-w-md rounded-md border px-3 py-2 text-sm"
           />
-          <p className="text-xs text-gray-500 mt-2">
+          <p className="mt-2 text-xs text-gray-500">
             Reference details are saved in the purchase notes.
           </p>
         </div>
 
         <div>
-          <div className="flex items-center gap-4 flex-wrap">
-            <div>
-              <label className="text-xs font-medium text-gray-500">
-                Payment Method
-              </label>
-              <select
-                value={paymentType}
-                onChange={(event) => setPaymentType(event.target.value)}
-                disabled={saving}
-                className="block border rounded-md px-3 py-2 mt-1 text-sm"
-              >
-                <option value="CASH">Cash</option>
-                <option value="BANK">Bank</option>
-                <option value="UPI">UPI</option>
-                <option value="CARD">Card</option>
-                <option value="OTHERS">Other</option>
-              </select>
-            </div>
-          </div>
+          <label className="text-xs font-medium text-gray-500">
+            Payment Method
+          </label>
+          <select
+            value={paymentType}
+            onChange={(event) => setPaymentType(event.target.value)}
+            disabled={saving}
+            className="mt-1 block rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="CASH">Cash</option>
+            <option value="BANK">Bank</option>
+            <option value="UPI">UPI</option>
+            <option value="CARD">Card</option>
+            <option value="OTHERS">Other</option>
+          </select>
 
-          <label className="flex items-center gap-2 mt-4 text-sm">
+          <label className="mt-4 flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={paid}
@@ -748,11 +925,12 @@ export default function NewPurchasePage() {
             Mark invoice as fully paid
           </label>
 
-          <div className="flex justify-between text-sm mt-2">
+          <div className="mt-2 flex justify-between text-sm">
             <span className="text-gray-600">Paid now</span>
             <span>{money(paid ? totals.total : 0)}</span>
           </div>
-          <div className="flex justify-between text-sm mt-1">
+
+          <div className="mt-1 flex justify-between text-sm">
             <span className="text-gray-600">Outstanding balance</span>
             <span className="font-semibold">
               {money(paid ? 0 : totals.total)}
@@ -761,20 +939,21 @@ export default function NewPurchasePage() {
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-3 px-6 py-4 border-t bg-gray-50">
+      <div className="flex items-center justify-end gap-3 border-t bg-gray-50 px-6 py-4">
         <button
           type="button"
           onClick={() => router.push("/purchases")}
           disabled={saving}
-          className="border rounded-md px-4 py-2 text-sm hover:bg-white disabled:opacity-50"
+          className="rounded-md border px-4 py-2 text-sm hover:bg-white disabled:opacity-50"
         >
           Cancel
         </button>
+
         <button
           type="button"
           onClick={handleSave}
           disabled={saving || loadingOptions || suppliers.length === 0}
-          className="bg-blue-600 hover:bg-blue-700 text-white rounded-md px-5 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? "Saving purchase..." : "Save purchase"}
         </button>
