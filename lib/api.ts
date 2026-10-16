@@ -631,6 +631,67 @@ export const api = {
         method: "POST",
       },
     ),
+    
+  /* =======================================================
+     QUOTATIONS
+  ======================================================= */
+
+  quotations: (
+    params?: Record<string, QueryValue>,
+  ) =>
+    request<PaginatedResponse<any>>(
+      `/quotations${buildQuery(params)}`,
+    ),
+
+  quotation: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/quotations/${encodeURIComponent(id)}`,
+    ),
+
+  createQuotation: (
+    data: {
+      customerId?: string | null;
+      date?: string;
+      expiryDate?: string | null;
+      items: Array<{
+        itemId?: string | null;
+        itemName?: string;
+        hsnSac?: string | null;
+        quantity: number;
+        unit?: string | null;
+        rate: number;
+        discountPercent?: number;
+        gstRate?: number;
+      }>;
+      notes?: string | null;
+      terms?: string | null;
+    },
+  ) =>
+    request<ApiSuccess<any>>(
+      "/quotations",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  updateQuotationStatus: (
+    id: string,
+    status:
+      | "DRAFT"
+      | "SENT"
+      | "ACCEPTED"
+      | "REJECTED"
+      | "EXPIRED",
+  ) =>
+    request<ApiSuccess<any>>(
+      `/quotations/${encodeURIComponent(id)}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      },
+    ),
+
 
   /* =======================================================
      PURCHASES
