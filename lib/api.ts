@@ -691,6 +691,46 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+
+
+      /* =======================================================
+     SHELF MANAGEMENT
+  ======================================================= */
+
+  shelves: () =>
+    request<ApiSuccess<any[]>>("/shelves"),
+
+  shelfStock: (shelfId: string) =>
+    request<ApiSuccess<any>>(
+      `/shelves/${encodeURIComponent(shelfId)}/stock`,
+    ),
+
+  placeShelfStock: (
+    shelfId: string,
+    data: {
+      itemId: string;
+      quantity: number;
+    },
+  ) =>
+    request<ApiSuccess<any>>(
+      `/shelves/${encodeURIComponent(shelfId)}/stock`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    ),
+
+  transferShelfStock: (data: {
+    itemId: string;
+    fromShelfId: string;
+    toShelfId: string;
+    quantity: number;
+    reason?: string;
+  }) =>
+    request<ApiSuccess<any>>("/shelves/transfer", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 };
 
 /* =========================================================

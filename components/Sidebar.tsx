@@ -33,7 +33,7 @@ const nav = [
       { href: "/sales/quotations", label: "Quotations" },
       { href: "/sales/returns", label: "Returns" },
       { href: "/payments/in", label: "Payments-In" },
-      { href: "/payments/out", label: "Payments-Out" },
+      { href: "/payments/payment-out", label: "Payments-Out" },
       { href: "/delivery-challan", label: "Delivery Challan" },
     ],
   },
@@ -53,6 +53,7 @@ const nav = [
     children: [
       { href: "/items", label: "All Items" },
       { href: "/items/stock", label: "Stock Summary" },
+      { href: "/items/shelves", label: "Shelves" },
     ],
   },
   { href: "/expenses", label: "Expenses", icon: Wallet },
