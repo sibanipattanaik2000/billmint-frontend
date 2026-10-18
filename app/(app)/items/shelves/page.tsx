@@ -118,24 +118,44 @@ export default function ShelfManagementPage() {
     setItems(allItems);
 
     setSelectedShelfId((current) => {
-      if (orderedShelves.some((shelf) => shelf.id === current)) {
+      if (
+        current &&
+        orderedShelves.some(
+          (shelf) => shelf.id === current && shelf.isActive,
+        )
+      ) {
         return current;
       }
-      return orderedShelves[0]?.id ?? "";
+
+      return orderedShelves.find((shelf) => shelf.isActive)?.id ?? "";
     });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedShelfId) {
+      setDestinationShelfId("");
+      return;
+    }
 
     setDestinationShelfId((current) => {
       if (
         current &&
-        orderedShelves.some((shelf) => shelf.id === current)
+        current !== selectedShelfId &&
+        shelves.some(
+          (shelf) => shelf.id === current && shelf.isActive,
+        )
       ) {
         return current;
       }
-      return orderedShelves.find(
-        (shelf) => shelf.id !== selectedShelfId,
-      )?.id ?? "";
+
+      return (
+        shelves.find(
+          (shelf) =>
+            shelf.isActive && shelf.id !== selectedShelfId,
+        )?.id ?? ""
+      );
     });
-  }, [selectedShelfId]);
+  }, [selectedShelfId, shelves]);
 
   const loadShelfStock = useCallback(async (shelfId: string) => {
     if (!shelfId) {
@@ -203,8 +223,6 @@ export default function ShelfManagementPage() {
     (total, stock) => total + numberValue(stock.quantity),
     0,
   );
-
-  const allocatedItemIds = new Set(currentStocks.map((stock) => stock.item.id));
   const selectedItem = items.find((item) => item.id === itemId);
   const transferItemOptions = currentStocks.filter(
     (stock) => numberValue(stock.quantity) > 0,
