@@ -129,10 +129,10 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          <div className="mt-6 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
+          {/* <div className="mt-6 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
             <strong>Demo:</strong> User ID <code className="font-mono">admin</code> · Password{' '}
             <code className="font-mono">Admin@12345</code>
-          </div>
+          </div> */}
         </div>
       </div>
     </div>

@@ -1,8 +1,8 @@
-
 "use client";
 
 import { useRef, useState } from "react";
 import { api } from "@/lib/api";
+import * as XLSX from "xlsx";
 
 type ModuleType =
   | "parties"
@@ -12,45 +12,21 @@ type ModuleType =
   | "expenses";
 
 type TabType = "export" | "import";
-
 type CsvRow = Record<string, string>;
 
 type ImportResult = {
   created: number;
   failed: number;
   errors: string[];
+  failedRows: CsvRow[];
 };
 
-const MODULES: {
-  id: ModuleType;
-  label: string;
-  icon: string;
-}[] = [
-  {
-    id: "parties",
-    label: "Parties (Customers & Suppliers)",
-    icon: "👥",
-  },
-  {
-    id: "items",
-    label: "Items / Products",
-    icon: "📦",
-  },
-  {
-    id: "sale-invoices",
-    label: "Sale Invoices",
-    icon: "🧾",
-  },
-  {
-    id: "purchase-invoices",
-    label: "Purchase Invoices",
-    icon: "🛒",
-  },
-  {
-    id: "expenses",
-    label: "Expenses",
-    icon: "💸",
-  },
+const MODULES: { id: ModuleType; label: string; icon: string }[] = [
+  { id: "parties", label: "Parties (Customers & Suppliers)", icon: "👥" },
+  { id: "items", label: "Items / Products", icon: "📦" },
+  { id: "sale-invoices", label: "Sale Invoices", icon: "🧾" },
+  { id: "purchase-invoices", label: "Purchase Invoices", icon: "🛒" },
+  { id: "expenses", label: "Expenses", icon: "💸" },
 ];
 
 const CSV_HEADERS: Record<ModuleType, string[]> = {
@@ -73,6 +49,11 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Name",
     "SKU",
     "Barcode",
+    "IMEI",
+    "Category ID",
+    "Brand ID",
+    "Unit ID",
+    "Supplier ID",
     "Description",
     "Purchase Price",
     "Sale Price",
@@ -81,6 +62,10 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Minimum Stock",
     "GST Rate",
     "HSN/SAC",
+    "Discount Percent",
+    "Track Batch",
+    "Track Serial",
+    "Track Expiry",
   ],
   "sale-invoices": [
     "Date",
@@ -112,7 +97,6 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
 
 function csvEscape(value: unknown): string {
   const text = value == null ? "" : String(value);
-
   return `"${text.replace(/"/g, '""')}"`;
 }
 
@@ -123,16 +107,11 @@ function toCsv(headers: string[], rows: unknown[][]): string {
   ].join("\r\n");
 }
 
-/**
- * Parses quoted CSV cells, escaped quotes, and commas inside cells.
- * Excel .xlsx/.xls binary files are intentionally not accepted here.
- */
 function parseCsv(input: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";
   let quoted = false;
-
   const source = input.replace(/^\uFEFF/, "");
 
   for (let i = 0; i < source.length; i += 1) {
@@ -149,7 +128,6 @@ function parseCsv(input: string): string[][] {
       } else {
         cell += char;
       }
-
       continue;
     }
 
@@ -163,9 +141,7 @@ function parseCsv(input: string): string[][] {
       rows.push(row);
       row = [];
       cell = "";
-    } else if (char === "\r") {
-      // Ignore CR in CRLF line endings.
-    } else {
+    } else if (char !== "\r") {
       cell += char;
     }
   }
@@ -179,51 +155,97 @@ function parseCsv(input: string): string[][] {
     rows.push(row);
   }
 
-  return rows.filter((values) =>
-    values.some((value) => value.trim() !== ""),
-  );
+  return rows.filter((values) => values.some((value) => value.trim() !== ""));
 }
 
-function rowsToObjects(input: string): CsvRow[] {
-  const rows = parseCsv(input);
+function normalizeHeader(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
 
-  if (rows.length < 2) {
-    throw new Error("The CSV must contain a header and at least one data row.");
-  }
+function spreadsheetToObjects(grid: unknown[][]): {
+  headers: string[];
+  rows: CsvRow[];
+} {
+  const trimmedGrid = grid.map((sourceRow) => {
+    const row = [...sourceRow];
 
-  const headers = rows[0].map((header) =>
-    header.trim().toLowerCase(),
+    while (row.length > 0 && String(row[row.length - 1] ?? "").trim() === "") {
+      row.pop();
+    }
+
+    return row;
+  });
+
+  const nonEmptyRows = trimmedGrid.filter((row) =>
+    row.some((cell) => String(cell ?? "").trim() !== ""),
   );
 
-  if (headers.some((header) => !header)) {
-    throw new Error("The CSV contains an empty column header.");
+  if (nonEmptyRows.length < 2) {
+    throw new Error(
+      "The file must contain a header row and at least one data row.",
+    );
   }
 
-  if (new Set(headers).size !== headers.length) {
-    throw new Error("The CSV contains duplicate column headers.");
+  const originalHeaders = nonEmptyRows[0].map((value) =>
+    String(value ?? "").trim(),
+  );
+  const normalizedHeaders = originalHeaders.map(normalizeHeader);
+
+  if (normalizedHeaders.some((header) => !header)) {
+    throw new Error("The file contains an empty column header.");
   }
 
-  return rows.slice(1).map((values) => {
-    const result: CsvRow = {};
+  if (new Set(normalizedHeaders).size !== normalizedHeaders.length) {
+    throw new Error(
+      "The file contains duplicate column headers. Rename duplicate columns and upload again.",
+    );
+  }
 
-    headers.forEach((header, index) => {
-      result[header] = (values[index] ?? "").trim();
+  const rows: CsvRow[] = nonEmptyRows.slice(1).map((values, rowIndex) => {
+    const hasExtraData = values
+      .slice(originalHeaders.length)
+      .some((value) => String(value ?? "").trim() !== "");
+
+    if (hasExtraData) {
+      throw new Error(
+        `Data row ${rowIndex + 2} contains values beyond the last header column. Add the missing column header or correct the spreadsheet.`,
+      );
+    }
+
+    const row: CsvRow = {};
+
+    normalizedHeaders.forEach((header, index) => {
+      const value = values[index];
+      row[header] =
+        value === null || value === undefined ? "" : String(value).trim();
     });
 
-    return result;
+    return row;
   });
+
+  return { headers: originalHeaders, rows };
+}
+
+function parseBoolean(
+  value: string | undefined,
+  defaultValue = false,
+): boolean {
+  if (!value?.trim()) return defaultValue;
+
+  const normalized = value.trim().toLowerCase();
+
+  if (["true", "yes", "1", "y"].includes(normalized)) return true;
+  if (["false", "no", "0", "n"].includes(normalized)) return false;
+
+  throw new Error(`Expected Yes/No or True/False, but received "${value}".`);
 }
 
 function getField(row: CsvRow, name: string): string {
-  return row[name.toLowerCase()] ?? "";
+  return row[normalizeHeader(name)] ?? "";
 }
 
-function optionalNumber(
-  row: CsvRow,
-  name: string,
-): number | undefined {
+function optionalNumber(row: CsvRow, name: string): number | undefined {
   const value = getField(row, name);
-
   if (!value) return undefined;
 
   const parsed = Number(value);
@@ -235,10 +257,7 @@ function optionalNumber(
   return parsed;
 }
 
-function requiredNumber(
-  row: CsvRow,
-  name: string,
-): number {
+function requiredNumber(row: CsvRow, name: string): number {
   const value = optionalNumber(row, name);
 
   if (value === undefined) {
@@ -274,11 +293,6 @@ function dateOnly(value: unknown): string {
     : date.toISOString().slice(0, 10);
 }
 
-function numericValue(value: unknown): number {
-  const result = Number(value ?? 0);
-  return Number.isFinite(result) ? result : 0;
-}
-
 function downloadCsv(filename: string, content: string): void {
   const blob = new Blob(["\uFEFF", content], {
     type: "text/csv;charset=utf-8;",
@@ -292,19 +306,13 @@ function downloadCsv(filename: string, content: string): void {
   document.body.appendChild(link);
   link.click();
   link.remove();
-
   URL.revokeObjectURL(url);
 }
 
 async function fetchAllPages<T>(
-  fetchPage: (params: {
-    page: number;
-    limit: number;
-  }) => Promise<{
+  fetchPage: (params: { page: number; limit: number }) => Promise<{
     data: T[];
-    pagination?: {
-      totalPages?: number;
-    };
+    pagination?: { totalPages?: number };
   }>,
 ): Promise<T[]> {
   const all: T[] = [];
@@ -322,10 +330,7 @@ async function fetchAllPages<T>(
 
     const totalPages = result.pagination?.totalPages;
 
-    if (
-      typeof totalPages !== "number" ||
-      page >= totalPages
-    ) {
+    if (typeof totalPages !== "number" || page >= totalPages) {
       break;
     }
 
@@ -340,14 +345,100 @@ async function fetchAllPages<T>(
 }
 
 function ensureSupportedImport(module: ModuleType): void {
-  if (
-    module === "sale-invoices" ||
-    module === "purchase-invoices"
-  ) {
+  if (module === "sale-invoices" || module === "purchase-invoices") {
     throw new Error(
-      "Invoice CSV import is not enabled. BillMint must validate invoice line items, party references, numbering, stock and payment balances together. Export is available for these modules.",
+      "Invoice import is not enabled. Invoice creation requires validation of line items, party references, numbering, stock and payment balances. Export is available.",
     );
   }
+}
+
+function validateItemRows(rows: CsvRow[]): string[] {
+  const errors: string[] = [];
+  const seenSku = new Set<string>();
+  const seenBarcode = new Set<string>();
+  const seenImei = new Set<string>();
+
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2;
+
+    try {
+      const name = getField(row, "Name");
+      if (!name) throw new Error("Name is required.");
+
+      const sku = optionalValue(getField(row, "SKU"));
+      const barcode = optionalValue(getField(row, "Barcode"));
+      const imei = optionalValue(getField(row, "IMEI"));
+      const openingStock = optionalNumber(row, "Opening Stock") ?? 0;
+      const purchasePrice = optionalNumber(row, "Purchase Price") ?? 0;
+      const salePrice = optionalNumber(row, "Sale Price") ?? 0;
+      const mrp = optionalNumber(row, "MRP");
+      const minimumStock = optionalNumber(row, "Minimum Stock") ?? 0;
+      const gstRate = optionalNumber(row, "GST Rate") ?? 18;
+      const discountPercent = optionalNumber(row, "Discount Percent") ?? 0;
+      const trackSerial = parseBoolean(getField(row, "Track Serial"));
+
+      parseBoolean(getField(row, "Track Batch"));
+      parseBoolean(getField(row, "Track Expiry"));
+
+      if (
+        purchasePrice < 0 ||
+        salePrice < 0 ||
+        (mrp !== undefined && mrp < 0) ||
+        openingStock < 0 ||
+        minimumStock < 0
+      ) {
+        throw new Error("Prices and stock cannot be negative.");
+      }
+
+      if (gstRate < 0 || gstRate > 100) {
+        throw new Error("GST Rate must be between 0 and 100.");
+      }
+
+      if (discountPercent < 0 || discountPercent > 100) {
+        throw new Error("Discount Percent must be between 0 and 100.");
+      }
+
+      if (trackSerial) {
+        if (!imei || !/^\d{15}$/.test(imei)) {
+          throw new Error(
+            "Track Serial requires an IMEI containing exactly 15 digits.",
+          );
+        }
+
+        if (openingStock > 1) {
+          throw new Error(
+            "A serialized item can have maximum opening stock of 1.",
+          );
+        }
+      } else if (imei) {
+        throw new Error("Provide an IMEI only when Track Serial is Yes.");
+      }
+
+      const identifiers: Array<[string | undefined, Set<string>, string]> = [
+        [sku, seenSku, "SKU"],
+        [barcode, seenBarcode, "Barcode"],
+        [imei, seenImei, "IMEI"],
+      ];
+
+      for (const [value, seen, label] of identifiers) {
+        if (!value) continue;
+
+        if (seen.has(value)) {
+          throw new Error(`Duplicate ${label} "${value}" in this file.`);
+        }
+
+        seen.add(value);
+      }
+    } catch (error) {
+      errors.push(
+        `Row ${rowNumber}: ${
+          error instanceof Error ? error.message : "Invalid item data."
+        }`,
+      );
+    }
+  });
+
+  return errors;
 }
 
 async function importRows(
@@ -360,6 +451,7 @@ async function importRows(
     created: 0,
     failed: 0,
     errors: [],
+    failedRows: [],
   };
 
   for (let index = 0; index < rows.length; index += 1) {
@@ -371,14 +463,10 @@ async function importRows(
         const name = getField(row, "Name");
         const type = getField(row, "Type").toLowerCase();
 
-        if (!name) {
-          throw new Error("Name is required.");
-        }
+        if (!name) throw new Error("Name is required.");
 
         if (type !== "customer" && type !== "supplier") {
-          throw new Error(
-            'Type must be either "Customer" or "Supplier".',
-          );
+          throw new Error('Type must be either "Customer" or "Supplier".');
         }
 
         const common = {
@@ -392,8 +480,7 @@ async function importRows(
           pinCode: optionalValue(getField(row, "PIN Code")),
           gstin: optionalValue(getField(row, "GSTIN")),
           pan: optionalValue(getField(row, "PAN")),
-          openingBalance:
-            optionalNumber(row, "Opening Balance") ?? 0,
+          openingBalance: optionalNumber(row, "Opening Balance") ?? 0,
           notes: optionalValue(getField(row, "Notes")),
         };
 
@@ -402,19 +489,22 @@ async function importRows(
         } else {
           await api.createSupplier(common);
         }
-      }
-
-      if (module === "items") {
+      } else if (module === "items") {
         const name = getField(row, "Name");
+        if (!name) throw new Error("Name is required.");
 
-        if (!name) {
-          throw new Error("Name is required.");
-        }
+        const trackSerial = parseBoolean(getField(row, "Track Serial"));
+        const imei = optionalValue(getField(row, "IMEI"));
 
         const payload = {
           name,
           sku: optionalValue(getField(row, "SKU")),
           barcode: optionalValue(getField(row, "Barcode")),
+          imei,
+          categoryId: optionalValue(getField(row, "Category ID")),
+          brandId: optionalValue(getField(row, "Brand ID")),
+          unitId: optionalValue(getField(row, "Unit ID")),
+          supplierId: optionalValue(getField(row, "Supplier ID")),
           description: optionalValue(getField(row, "Description")),
           purchasePrice: optionalNumber(row, "Purchase Price") ?? 0,
           salePrice: optionalNumber(row, "Sale Price") ?? 0,
@@ -423,9 +513,10 @@ async function importRows(
           minimumStock: optionalNumber(row, "Minimum Stock") ?? 0,
           gstRate: optionalNumber(row, "GST Rate") ?? 18,
           hsnSac: optionalValue(getField(row, "HSN/SAC")),
-          trackBatch: false,
-          trackSerial: false,
-          trackExpiry: false,
+          discountPercent: optionalNumber(row, "Discount Percent") ?? 0,
+          trackBatch: parseBoolean(getField(row, "Track Batch")),
+          trackSerial,
+          trackExpiry: parseBoolean(getField(row, "Track Expiry")),
         };
 
         if (
@@ -433,19 +524,37 @@ async function importRows(
           payload.salePrice < 0 ||
           (payload.mrp !== null && payload.mrp < 0) ||
           payload.openingStock < 0 ||
-          payload.minimumStock < 0 ||
-          payload.gstRate < 0 ||
-          payload.gstRate > 100
+          payload.minimumStock < 0
         ) {
-          throw new Error(
-            "Prices and stock cannot be negative; GST Rate must be between 0 and 100.",
-          );
+          throw new Error("Prices and stock cannot be negative.");
+        }
+
+        if (payload.gstRate < 0 || payload.gstRate > 100) {
+          throw new Error("GST Rate must be between 0 and 100.");
+        }
+
+        if (payload.discountPercent < 0 || payload.discountPercent > 100) {
+          throw new Error("Discount Percent must be between 0 and 100.");
+        }
+
+        if (trackSerial) {
+          if (!imei || !/^\d{15}$/.test(imei)) {
+            throw new Error(
+              "Track Serial requires an IMEI containing exactly 15 digits.",
+            );
+          }
+
+          if (payload.openingStock > 1) {
+            throw new Error(
+              "A serialized item can have maximum opening stock of 1.",
+            );
+          }
+        } else if (imei) {
+          throw new Error("Provide an IMEI only when Track Serial is Yes.");
         }
 
         await api.createItem(payload);
-      }
-
-      if (module === "expenses") {
+      } else if (module === "expenses") {
         const amount = requiredNumber(row, "Amount");
 
         if (amount <= 0) {
@@ -453,27 +562,19 @@ async function importRows(
         }
 
         const date = toIsoDate(getField(row, "Date"));
-
         const category = optionalValue(getField(row, "Category"));
-        const description = optionalValue(
-          getField(row, "Description"),
-        );
+        const description = optionalValue(getField(row, "Description"));
 
         if (!category && !description) {
-          throw new Error(
-            "Provide a Category or Description for the expense.",
-          );
+          throw new Error("Provide a Category or Description for the expense.");
         }
 
-        // The existing backend accepts category as a name and
-        // resolves it through its expense service.
         await api.createExpense({
           amount,
           date,
           category,
           description,
-          paymentMethod:
-            optionalValue(getField(row, "Payment Method")) ?? "",
+          paymentMethod: optionalValue(getField(row, "Payment Method")) ?? "",
           notes: optionalValue(getField(row, "Notes")),
         });
       }
@@ -482,10 +583,10 @@ async function importRows(
     } catch (error) {
       result.failed += 1;
 
-      const message =
-        error instanceof Error ? error.message : "Unknown error";
+      const message = error instanceof Error ? error.message : "Unknown error";
 
       result.errors.push(`Row ${rowNumber}: ${message}`);
+      result.failedRows.push(row);
     }
   }
 
@@ -494,16 +595,26 @@ async function importRows(
 
 export default function ImportExportPage() {
   const [activeTab, setActiveTab] = useState<TabType>("export");
-  const [selectedModule, setSelectedModule] =
-    useState<ModuleType>("parties");
+  const [selectedModule, setSelectedModule] = useState<ModuleType>("parties");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [previewHeaders, setPreviewHeaders] = useState<string[]>([]);
+  const [previewRows, setPreviewRows] = useState<CsvRow[]>([]);
+  const [previewFileName, setPreviewFileName] = useState("");
+  const [unsupportedColumns, setUnsupportedColumns] = useState<string[]>([]);
 
   const selectedLabel =
     MODULES.find((module) => module.id === selectedModule)?.label ??
     selectedModule;
+
+  function clearPreview(): void {
+    setPreviewHeaders([]);
+    setPreviewRows([]);
+    setPreviewFileName("");
+    setUnsupportedColumns([]);
+  }
 
   function downloadTemplate(): void {
     if (
@@ -526,10 +637,33 @@ export default function ImportExportPage() {
     setErrors([]);
   }
 
+  function downloadExcelTemplate(): void {
+    if (
+      selectedModule === "sale-invoices" ||
+      selectedModule === "purchase-invoices"
+    ) {
+      setStatus(
+        "Invoice templates are not offered for import because invoice creation requires validated line items and accounting reconciliation.",
+      );
+      setErrors([]);
+      return;
+    }
+
+    const worksheet = XLSX.utils.aoa_to_sheet([CSV_HEADERS[selectedModule]]);
+    const workbook = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Import Template");
+    XLSX.writeFile(workbook, `billmint_${selectedModule}_template.xlsx`);
+
+    setStatus("Excel template downloaded.");
+    setErrors([]);
+  }
+
   async function handleExport(): Promise<void> {
     setBusy(true);
     setStatus("");
     setErrors([]);
+    clearPreview();
 
     try {
       let headers: string[] = [];
@@ -576,9 +710,7 @@ export default function ImportExportPage() {
           ]),
         ];
       } else if (selectedModule === "items") {
-        const items = await fetchAllPages<any>((params) =>
-          api.items(params),
-        );
+        const items = await fetchAllPages<any>((params) => api.items(params));
 
         headers = CSV_HEADERS.items;
 
@@ -586,6 +718,11 @@ export default function ImportExportPage() {
           item.name,
           item.sku,
           item.barcode,
+          item.imei,
+          item.category?.id,
+          item.brand?.id,
+          item.unit?.id,
+          item.supplier?.id,
           item.description,
           item.purchasePrice,
           item.salePrice,
@@ -594,11 +731,13 @@ export default function ImportExportPage() {
           item.minimumStock,
           item.gstRate,
           item.hsnSac,
+          item.discountPercent,
+          item.trackBatch,
+          item.trackSerial,
+          item.trackExpiry,
         ]);
       } else if (selectedModule === "sale-invoices") {
-        const sales = await fetchAllPages<any>((params) =>
-          api.sales(params),
-        );
+        const sales = await fetchAllPages<any>((params) => api.sales(params));
 
         headers = CSV_HEADERS["sale-invoices"];
 
@@ -645,9 +784,7 @@ export default function ImportExportPage() {
       }
 
       downloadCsv(
-        `billmint_${selectedModule}_${new Date()
-          .toISOString()
-          .slice(0, 10)}.csv`,
+        `billmint_${selectedModule}_${new Date().toISOString().slice(0, 10)}.csv`,
         toCsv(headers, rows),
       );
 
@@ -669,18 +806,18 @@ export default function ImportExportPage() {
     event: React.ChangeEvent<HTMLInputElement>,
   ): Promise<void> {
     const file = event.target.files?.[0];
-
     if (!file) return;
 
     setBusy(true);
     setStatus("");
     setErrors([]);
+    clearPreview();
 
     try {
-      if (!file.name.toLowerCase().endsWith(".csv")) {
-        throw new Error(
-          "Only CSV files are supported right now. Save your Excel sheet as CSV and upload it again.",
-        );
+      const extension = file.name.split(".").pop()?.toLowerCase();
+
+      if (!["csv", "xlsx", "xls"].includes(extension ?? "")) {
+        throw new Error("Choose an Excel (.xlsx, .xls) or CSV (.csv) file.");
       }
 
       if (file.size > 5 * 1024 * 1024) {
@@ -689,27 +826,102 @@ export default function ImportExportPage() {
 
       ensureSupportedImport(selectedModule);
 
-      const text = await file.text();
-      const rows = rowsToObjects(text);
+      let grid: unknown[][];
 
-      if (rows.length > 500) {
-        throw new Error(
-          "A maximum of 500 records can be imported per file.",
-        );
+      if (extension === "csv") {
+        grid = parseCsv(await file.text());
+      } else {
+        const workbook = XLSX.read(await file.arrayBuffer(), {
+          type: "array",
+          cellDates: true,
+        });
+
+        const firstSheetName = workbook.SheetNames[0];
+
+        if (!firstSheetName) {
+          throw new Error("The Excel file does not contain a worksheet.");
+        }
+
+        grid = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
+          header: 1,
+          defval: "",
+          raw: false,
+        }) as unknown[][];
       }
 
-      const result = await importRows(selectedModule, rows);
+      const parsed = spreadsheetToObjects(grid);
 
-      setStatus(
-        `Import finished: ${result.created} created, ${result.failed} failed. Check the row errors below before retrying.`,
+      if (parsed.rows.length > 500) {
+        throw new Error("A maximum of 500 data rows can be imported per file.");
+      }
+
+      // Detect item spreadsheets even if the page was initially set to Parties.
+      const normalizedHeaders = parsed.headers.map(normalizeHeader);
+
+      const itemHeaders = new Set([
+        "sku",
+        "barcode",
+        "imei",
+        "item number",
+        "item no",
+        "item code",
+        "purchase price",
+        "sale price",
+        "mrp",
+        "opening stock",
+        "minimum stock",
+        "gst rate",
+        "hsn/sac",
+        "source code",
+        "date of purchase",
+        "purchase date",
+        "remark",
+        "remarks",
+      ]);
+
+      const partyHeaders = new Set([
+        "type",
+        "phone",
+        "email",
+        "opening balance",
+      ]);
+
+      const hasItemHeaders = normalizedHeaders.some((header) =>
+        itemHeaders.has(header),
       );
 
-      setErrors(result.errors);
+      const hasPartyHeaders = normalizedHeaders.some((header) =>
+        partyHeaders.has(header),
+      );
+
+      const detectedModule: ModuleType =
+        hasItemHeaders && !hasPartyHeaders ? "items" : selectedModule;
+
+      if (detectedModule !== selectedModule) {
+        setSelectedModule(detectedModule);
+      }
+
+      const supportedHeaders = new Set(
+        CSV_HEADERS[detectedModule].map(normalizeHeader),
+      );
+
+      const ignored = parsed.headers.filter(
+        (header) => !supportedHeaders.has(normalizeHeader(header)),
+      );
+
+      setPreviewHeaders(parsed.headers);
+      setPreviewRows(parsed.rows);
+      setPreviewFileName(file.name);
+      setUnsupportedColumns(ignored);
+
+      setStatus(
+        `Preview ready: ${parsed.rows.length} data rows and ${parsed.headers.length} columns. Review the data before importing.`,
+      );
     } catch (error) {
       setStatus(
         error instanceof Error
           ? error.message
-          : "Import failed. No success has been assumed.",
+          : "Unable to read the selected file.",
       );
     } finally {
       setBusy(false);
@@ -720,14 +932,66 @@ export default function ImportExportPage() {
     }
   }
 
+  async function handleConfirmImport(): Promise<void> {
+    if (busy || previewRows.length === 0) return;
+
+    setBusy(true);
+    setStatus("");
+    setErrors([]);
+
+    try {
+      ensureSupportedImport(selectedModule);
+
+      if (
+        unsupportedColumns.length > 0 &&
+        unsupportedColumns.length === previewHeaders.length
+      ) {
+        throw new Error(
+          "None of the spreadsheet columns match the selected module's supported template. Download the template and use its column headers.",
+        );
+      }
+
+      if (selectedModule === "items") {
+        const validationErrors = validateItemRows(previewRows);
+
+        if (validationErrors.length > 0) {
+          setErrors(validationErrors);
+          throw new Error(
+            "No items were imported. Correct the highlighted row errors and upload the corrected file again.",
+          );
+        }
+      }
+
+      const result = await importRows(selectedModule, previewRows);
+
+      setStatus(
+        `Import finished: ${result.created} created, ${result.failed} failed.`,
+      );
+
+      setErrors(result.errors);
+
+      if (result.failed === 0) {
+        clearPreview();
+      } else {
+        setPreviewRows(result.failedRows);
+        setStatus(
+          `Import finished: ${result.created} created, ${result.failed} failed. Only failed rows remain in the preview, so retrying will not re-import successful rows.`,
+        );
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Import failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
       <header className="border-b px-6 py-5">
-        <h1 className="text-xl font-semibold text-gray-900">
-          Import / Export
-        </h1>
+        <h1 className="text-xl font-semibold text-gray-900">Import / Export</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Download real business records or import supported CSV data.
+          Download real business records or preview and import supported
+          spreadsheet data.
         </p>
       </header>
 
@@ -740,6 +1004,7 @@ export default function ImportExportPage() {
               setActiveTab(tab);
               setStatus("");
               setErrors([]);
+              clearPreview();
             }}
             className={`border-b-2 pb-3 text-sm font-medium transition ${
               activeTab === tab
@@ -770,6 +1035,7 @@ export default function ImportExportPage() {
                 setSelectedModule(event.target.value as ModuleType);
                 setStatus("");
                 setErrors([]);
+                clearPreview();
               }}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             >
@@ -792,8 +1058,8 @@ export default function ImportExportPage() {
                     Export {selectedLabel}
                   </h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    Fetches your authenticated business records from the
-                    backend and downloads them as a CSV file.
+                    Fetches your authenticated business records from the backend
+                    and downloads them as a CSV file.
                   </p>
                 </div>
               </div>
@@ -814,44 +1080,160 @@ export default function ImportExportPage() {
                   Import {selectedLabel}
                 </h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  Download a template, enter your data without changing the
-                  column headers, and upload the completed CSV.
+                  Download the template, enter your data without changing the
+                  column headers, then upload a CSV or Excel file to preview it
+                  before importing.
                 </p>
               </div>
 
               {selectedModule === "sale-invoices" ||
               selectedModule === "purchase-invoices" ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  Invoice imports are intentionally disabled until a
-                  dedicated backend workflow can validate invoice items,
-                  numbering, stock and accounting balances. You can still
-                  export existing invoices.
+                  Invoice imports are intentionally disabled until a dedicated
+                  backend workflow can validate invoice items, numbering, stock
+                  and accounting balances. You can still export existing
+                  invoices.
                 </div>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={downloadTemplate}
-                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                  >
-                    Download CSV template
-                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={downloadTemplate}
+                      className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                    >
+                      Download CSV template
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={downloadExcelTemplate}
+                      className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                    >
+                      Download Excel template
+                    </button>
+                  </div>
 
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,text/csv"
+                    accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     onChange={handleImport}
                     disabled={busy}
                     className="block w-full cursor-pointer rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-600 file:mr-4 file:rounded-md file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:font-medium file:text-blue-700 hover:border-blue-400"
                   />
 
                   <p className="text-xs text-gray-500">
-                    CSV only · Maximum 5 MB and 500 rows per file.
-                    Each record is sent to the backend individually.
+                    Excel (.xlsx, .xls) and CSV supported · Maximum 5 MB and 500
+                    data rows per file. Excel imports read the first worksheet.
+                    Uploaded data is previewed before import.
                   </p>
                 </>
+              )}
+
+              {previewRows.length > 0 && (
+                <section className="mt-6 rounded-xl border border-blue-200 bg-white">
+                  {unsupportedColumns.length > 0 && (
+                    <div className="border-b border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      <p className="font-semibold">
+                        Some columns are preview-only and will not be imported.
+                      </p>
+                      <p className="mt-1">
+                        Unsupported columns: {unsupportedColumns.join(", ")}.
+                        Use the downloaded template headers for fields BillMint
+                        currently supports.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+                    <div>
+                      <h2 className="font-semibold text-gray-900">
+                        Spreadsheet Preview
+                      </h2>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {previewFileName} · {previewRows.length} rows ·{" "}
+                        {previewHeaders.length} columns
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          clearPreview();
+                          setStatus(
+                            "Spreadsheet preview cleared. No records were imported.",
+                          );
+                          setErrors([]);
+                        }}
+                        className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Clear Preview
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={handleConfirmImport}
+                        className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {busy
+                          ? "Importing..."
+                          : `Import All ${previewRows.length} Rows`}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="max-h-[520px] overflow-auto">
+                    <table className="min-w-full border-collapse text-left text-sm">
+                      <thead className="sticky top-0 z-10 bg-gray-100">
+                        <tr>
+                          <th className="border-b border-r px-3 py-3 font-semibold">
+                            #
+                          </th>
+
+                          {previewHeaders.map((header, index) => (
+                            <th
+                              key={`${header}-${index}`}
+                              className="whitespace-nowrap border-b border-r px-3 py-3 font-semibold text-gray-700"
+                            >
+                              {header}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {previewRows.map((row, rowIndex) => (
+                          <tr key={rowIndex} className="hover:bg-blue-50">
+                            <td className="border-b border-r px-3 py-2 text-gray-500">
+                              {rowIndex + 1}
+                            </td>
+
+                            {previewHeaders.map((header, columnIndex) => (
+                              <td
+                                key={`${rowIndex}-${columnIndex}`}
+                                className="max-w-[280px] whitespace-pre-wrap break-words border-b border-r px-3 py-2 text-gray-700"
+                              >
+                                {row[normalizeHeader(header)] ?? ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="border-t bg-gray-50 p-3 text-xs text-gray-500">
+                    Review the complete table before importing. Only supported
+                    fields are saved. Any columns marked preview-only are not
+                    stored in BillMint.
+                  </div>
+                </section>
               )}
             </section>
           )}
