@@ -33,6 +33,14 @@ interface ItemLookupResult {
   trackBatch?: boolean;
   trackSerial?: boolean;
   trackExpiry?: boolean;
+  modelName?: string | null;
+  deviceCode?: string | null;
+  inventoryUnit?: {
+    id: string;
+    imei?: string | null;
+    serialNumber?: string | null;
+    status?: string;
+  } | null;
   unit?: {
     id?: string;
     name?: string;
@@ -54,7 +62,7 @@ interface ItemLookupResult {
 
 interface SaleRow {
   rowId: string;
-
+  inventoryUnitId: string | null;
   itemId: string | null;
   itemCode: string;
   barcode: string;
@@ -85,7 +93,7 @@ interface SaleRow {
 function createEmptyRow(): SaleRow {
   return {
     rowId: crypto.randomUUID(),
-
+    inventoryUnitId: null,
     itemId: null,
     itemCode: "",
     barcode: "",
@@ -148,8 +156,9 @@ export default function NewSalePage() {
 
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerId, setCustomerId] = useState<string | null>(null);
-  const [selectedCustomer, setSelectedCustomer] =
-    useState<Customer | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
+    null,
+  );
 
   const [customerResults, setCustomerResults] = useState<Customer[]>([]);
   const [customerLoading, setCustomerLoading] = useState(false);
@@ -162,7 +171,7 @@ export default function NewSalePage() {
   ========================================================= */
 
   const [invoiceDate, setInvoiceDate] = useState(
-    formatDateForInput(new Date())
+    formatDateForInput(new Date()),
   );
 
   /* =========================================================
@@ -289,6 +298,7 @@ export default function NewSalePage() {
     return {
       ...row,
       itemId: null,
+      inventoryUnitId: null,
       barcode: "",
       name: "",
       imei: "",
@@ -315,8 +325,8 @@ export default function NewSalePage() {
               ...row,
               ...patch,
             }
-          : row
-      )
+          : row,
+      ),
     );
   }
 
@@ -331,8 +341,7 @@ export default function NewSalePage() {
 
         if (
           row.itemId &&
-          row.itemCode.trim().toLowerCase() !==
-            nextCode.trim().toLowerCase()
+          row.itemCode.trim().toLowerCase() !== nextCode.trim().toLowerCase()
         ) {
           return resetItemFields({
             ...row,
@@ -343,12 +352,10 @@ export default function NewSalePage() {
         return {
           ...row,
           itemCode: nextCode,
-          lookupStatus: nextCode.trim()
-            ? "idle"
-            : "idle",
+          lookupStatus: nextCode.trim() ? "idle" : "idle",
           lookupMessage: "",
         };
-      })
+      }),
     );
   }
 
@@ -375,7 +382,10 @@ export default function NewSalePage() {
     });
 
     try {
-      const response = await api.itemByCode(code);
+      const isImei = /^\d{15}$/.test(code);
+      const response = isImei
+        ? await api.itemByImei(code)
+        : await api.itemByCode(code);
       const item = response.data as ItemLookupResult;
 
       const currentStock = numberValue(item.currentStock);
@@ -387,11 +397,12 @@ export default function NewSalePage() {
 
       updateRow(rowId, {
         itemId: item.id,
+        inventoryUnitId: item.inventoryUnit?.id ?? null,
 
-        itemCode: item.sku || code,
+        itemCode: item.deviceCode || item.sku || code,
         barcode: item.barcode || "",
-        name: item.name || "",
-        imei: item.imei || "",
+        name: item.modelName || item.name || "",
+        imei: item.inventoryUnit?.imei || item.imei || "",
 
         quantity: trackSerial ? 1 : Math.max(row.quantity || 1, 1),
 
@@ -413,15 +424,15 @@ export default function NewSalePage() {
 
         lookupStatus: "success",
         lookupMessage:
-          currentStock > 0
-            ? `Item found · Stock: ${currentStock}`
-            : "Item found · Out of stock",
+          isImei && item.inventoryUnit?.id
+            ? `IMEI matched · ${item.inventoryUnit.imei || code}`
+            : currentStock > 0
+              ? `Item found · Stock: ${currentStock}`
+              : "Item found · Out of stock",
       });
     } catch (error) {
       const message =
-        error instanceof ApiError
-          ? error.message
-          : "Unable to find item";
+        error instanceof ApiError ? error.message : "Unable to find item";
 
       updateRow(rowId, {
         ...resetItemFields({
@@ -445,7 +456,7 @@ export default function NewSalePage() {
       return;
     }
 
-    if (row.trackSerial) {
+    if (row.trackSerial || row.inventoryUnitId) {
       updateRow(rowId, {
         quantity: 1,
       });
@@ -474,9 +485,7 @@ export default function NewSalePage() {
     const rate = Math.max(0, numberValue(value));
 
     const gross = rate * row.quantity;
-    const discountAmount = roundMoney(
-      (gross * row.discountPercent) / 100
-    );
+    const discountAmount = roundMoney((gross * row.discountPercent) / 100);
 
     updateRow(rowId, {
       rate,
@@ -495,16 +504,11 @@ export default function NewSalePage() {
       return;
     }
 
-    const discountPercent = Math.min(
-      100,
-      Math.max(0, numberValue(value))
-    );
+    const discountPercent = Math.min(100, Math.max(0, numberValue(value)));
 
     const gross = row.rate * row.quantity;
 
-    const discountAmount = roundMoney(
-      (gross * discountPercent) / 100
-    );
+    const discountAmount = roundMoney((gross * discountPercent) / 100);
 
     updateRow(rowId, {
       discountPercent,
@@ -525,15 +529,10 @@ export default function NewSalePage() {
 
     const gross = row.rate * row.quantity;
 
-    const discountAmount = Math.min(
-      Math.max(0, numberValue(value)),
-      gross
-    );
+    const discountAmount = Math.min(Math.max(0, numberValue(value)), gross);
 
     const discountPercent =
-      gross > 0
-        ? roundMoney((discountAmount / gross) * 100)
-        : 0;
+      gross > 0 ? roundMoney((discountAmount / gross) * 100) : 0;
 
     updateRow(rowId, {
       discountAmount,
@@ -566,18 +565,11 @@ export default function NewSalePage() {
   function calculateRow(row: SaleRow) {
     const gross = row.rate * row.quantity;
 
-    const discountAmount = Math.min(
-      Math.max(0, row.discountAmount),
-      gross
-    );
+    const discountAmount = Math.min(Math.max(0, row.discountAmount), gross);
 
-    const taxableAmount = Math.max(
-      0,
-      gross - discountAmount
-    );
+    const taxableAmount = Math.max(0, gross - discountAmount);
 
-    const taxAmount =
-      (taxableAmount * row.gstRate) / 100;
+    const taxAmount = (taxableAmount * row.gstRate) / 100;
 
     const amount = taxableAmount + taxAmount;
 
@@ -626,24 +618,15 @@ export default function NewSalePage() {
      * Backend rounds the final invoice to the nearest rupee.
      * Keep the UI consistent with the actual saved invoice.
      */
-    const roundedGrandTotal = Math.round(
-      total + Number.EPSILON
-    );
+    const roundedGrandTotal = Math.round(total + Number.EPSILON);
 
-    const roundOff = roundMoney(
-      roundedGrandTotal - total
-    );
+    const roundOff = roundMoney(roundedGrandTotal - total);
 
     const grandTotal = roundedGrandTotal;
 
-    const safePaidAmount = Math.min(
-      Math.max(0, paidAmount),
-      grandTotal
-    );
+    const safePaidAmount = Math.min(Math.max(0, paidAmount), grandTotal);
 
-    const balanceAmount = roundMoney(
-      grandTotal - safePaidAmount
-    );
+    const balanceAmount = roundMoney(grandTotal - safePaidAmount);
 
     return {
       subtotal,
@@ -665,14 +648,10 @@ export default function NewSalePage() {
   async function handleSave() {
     setPageError("");
 
-    const validRows = items.filter(
-      (row) => row.itemId
-    );
+    const validRows = items.filter((row) => row.itemId);
 
     if (validRows.length === 0) {
-      setPageError(
-        "Add at least one valid item using the Item Code."
-      );
+      setPageError("Add at least one valid item using the Item Code.");
       return;
     }
 
@@ -682,53 +661,41 @@ export default function NewSalePage() {
       }
 
       if (row.quantity <= 0) {
+        setPageError(`Quantity must be greater than zero for "${row.name}".`);
+        return;
+      }
+      if (row.inventoryUnitId && row.quantity !== 1) {
         setPageError(
-          `Quantity must be greater than zero for "${row.name}".`
+          `The selected IMEI device "${row.name}" must have quantity 1.`,
         );
         return;
       }
-
       if (row.trackSerial && row.quantity !== 1) {
         setPageError(
-          `"${row.name}" is serial/IMEI tracked and must have quantity 1.`
+          `"${row.name}" is serial/IMEI tracked and must have quantity 1.`,
         );
         return;
       }
 
-      if (
-        row.currentStock >= 0 &&
-        row.quantity > row.currentStock
-      ) {
+      if (row.currentStock >= 0 && row.quantity > row.currentStock) {
         setPageError(
-          `Insufficient stock for "${row.name}". Available stock: ${row.currentStock}.`
+          `Insufficient stock for "${row.name}". Available stock: ${row.currentStock}.`,
         );
         return;
       }
 
       if (row.rate < 0) {
-        setPageError(
-          `Invalid selling rate for "${row.name}".`
-        );
+        setPageError(`Invalid selling rate for "${row.name}".`);
         return;
       }
 
-      if (
-        row.discountPercent < 0 ||
-        row.discountPercent > 100
-      ) {
-        setPageError(
-          `Invalid discount for "${row.name}".`
-        );
+      if (row.discountPercent < 0 || row.discountPercent > 100) {
+        setPageError(`Invalid discount for "${row.name}".`);
         return;
       }
 
-      if (
-        row.gstRate < 0 ||
-        row.gstRate > 100
-      ) {
-        setPageError(
-          `Invalid GST rate for "${row.name}".`
-        );
+      if (row.gstRate < 0 || row.gstRate > 100) {
+        setPageError(`Invalid GST rate for "${row.name}".`);
         return;
       }
     }
@@ -741,25 +708,16 @@ export default function NewSalePage() {
     }
 
     if (enteredPaidAmount > totals.grandTotal) {
-      setPageError(
-        "Received amount cannot be greater than the invoice total."
-      );
+      setPageError("Received amount cannot be greater than the invoice total.");
       return;
     }
 
-    if (
-      enteredPaidAmount > 0 &&
-      !paymentMethod
-    ) {
-      setPageError(
-        "Select a payment method for the received amount."
-      );
+    if (enteredPaidAmount > 0 && !paymentMethod) {
+      setPageError("Select a payment method for the received amount.");
       return;
     }
 
-    const saleDate = new Date(
-      `${invoiceDate}T12:00:00`
-    );
+    const saleDate = new Date(`${invoiceDate}T12:00:00`);
 
     if (Number.isNaN(saleDate.getTime())) {
       setPageError("Please select a valid invoice date.");
@@ -783,21 +741,20 @@ export default function NewSalePage() {
           rate: row.rate,
           discountPercent: row.discountPercent,
           gstRate: row.gstRate,
+          inventoryUnitIds: row.inventoryUnitId
+            ? [row.inventoryUnitId]
+            : undefined,
         })),
 
-        paymentMethod:
-          enteredPaidAmount > 0
-            ? paymentMethod
-            : undefined,
+        paymentMethod: enteredPaidAmount > 0 ? paymentMethod : undefined,
 
         paidAmount: enteredPaidAmount,
 
         terms: terms.trim() || undefined,
 
-        notes:
-          referenceNo.trim()
-            ? `Payment Reference: ${referenceNo.trim()}`
-            : undefined,
+        notes: referenceNo.trim()
+          ? `Payment Reference: ${referenceNo.trim()}`
+          : undefined,
       };
 
       const response = await api.createSale(payload);
@@ -807,17 +764,15 @@ export default function NewSalePage() {
       router.push(
         createdSale?.id
           ? `/sales?created=${encodeURIComponent(
-              createdSale.invoiceNumber || createdSale.id
+              createdSale.invoiceNumber || createdSale.id,
             )}`
-          : "/sales"
+          : "/sales",
       );
     } catch (error) {
       if (error instanceof ApiError) {
         setPageError(error.message);
       } else {
-        setPageError(
-          "Unable to create the sale. Please try again."
-        );
+        setPageError("Unable to create the sale. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -837,9 +792,7 @@ export default function NewSalePage() {
       <div className="border-b border-slate-200 px-6 py-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">
-              New Sale
-            </h1>
+            <h1 className="text-lg font-semibold text-slate-900">New Sale</h1>
 
             <p className="text-sm text-slate-500 mt-1">
               Add items by Item Code and create the invoice.
@@ -848,9 +801,7 @@ export default function NewSalePage() {
 
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <div className="text-xs text-slate-500">
-                Invoice Number
-              </div>
+              <div className="text-xs text-slate-500">Invoice Number</div>
 
               <div className="text-sm font-medium text-slate-800">
                 Auto generated
@@ -869,9 +820,7 @@ export default function NewSalePage() {
                 id="invoiceDate"
                 type="date"
                 value={invoiceDate}
-                onChange={(event) =>
-                  setInvoiceDate(event.target.value)
-                }
+                onChange={(event) => setInvoiceDate(event.target.value)}
                 className="border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -910,8 +859,7 @@ export default function NewSalePage() {
                 value={customerSearch}
                 onFocus={() =>
                   setShowCustomerResults(
-                    !selectedCustomer &&
-                      customerSearch.trim().length >= 2
+                    !selectedCustomer && customerSearch.trim().length >= 2,
                   )
                 }
                 onChange={(event) => {
@@ -924,9 +872,7 @@ export default function NewSalePage() {
                     setCustomerId(null);
                   }
 
-                  setShowCustomerResults(
-                    value.trim().length >= 2
-                  );
+                  setShowCustomerResults(value.trim().length >= 2);
                 }}
                 placeholder="Search customer by name, phone or other details"
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
@@ -945,8 +891,7 @@ export default function NewSalePage() {
 
             {showCustomerResults &&
               !selectedCustomer &&
-              (customerLoading ||
-                customerResults.length > 0) && (
+              (customerLoading || customerResults.length > 0) && (
                 <div className="absolute left-6 right-6 mt-1 z-20 bg-white border border-slate-200 rounded-md shadow-lg overflow-hidden">
                   {customerLoading && (
                     <div className="px-3 py-3 text-sm text-slate-500">
@@ -959,9 +904,7 @@ export default function NewSalePage() {
                       <button
                         type="button"
                         key={customer.id}
-                        onClick={() =>
-                          selectCustomer(customer)
-                        }
+                        onClick={() => selectCustomer(customer)}
                         className="w-full text-left px-3 py-3 border-b border-slate-100 hover:bg-slate-50"
                       >
                         <div className="font-medium text-sm text-slate-900">
@@ -1015,18 +958,10 @@ export default function NewSalePage() {
                   <th className="px-3 py-3 font-medium text-slate-600">
                     ITEM CODE
                   </th>
-                  <th className="px-3 py-3 font-medium text-slate-600">
-                    ITEM
-                  </th>
-                  <th className="px-3 py-3 font-medium text-slate-600">
-                    IMEI
-                  </th>
-                  <th className="px-3 py-3 font-medium text-slate-600">
-                    QTY
-                  </th>
-                  <th className="px-3 py-3 font-medium text-slate-600">
-                    UNIT
-                  </th>
+                  <th className="px-3 py-3 font-medium text-slate-600">ITEM</th>
+                  <th className="px-3 py-3 font-medium text-slate-600">IMEI</th>
+                  <th className="px-3 py-3 font-medium text-slate-600">QTY</th>
+                  <th className="px-3 py-3 font-medium text-slate-600">UNIT</th>
                   <th className="px-3 py-3 font-medium text-slate-600 text-right">
                     RATE
                   </th>
@@ -1055,9 +990,7 @@ export default function NewSalePage() {
                       <td className="px-3 py-3">
                         <button
                           type="button"
-                          onClick={() =>
-                            removeRow(row.rowId)
-                          }
+                          onClick={() => removeRow(row.rowId)}
                           className="text-slate-400 hover:text-red-600 text-lg leading-none"
                           title="Remove row"
                         >
@@ -1071,34 +1004,27 @@ export default function NewSalePage() {
                           type="text"
                           value={row.itemCode}
                           onChange={(event) =>
-                            handleItemCodeChange(
-                              row.rowId,
-                              event.target.value
-                            )
+                            handleItemCodeChange(row.rowId, event.target.value)
                           }
-                          onBlur={() =>
-                            lookupItem(row.rowId)
-                          }
+                          onBlur={() => lookupItem(row.rowId)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               event.preventDefault();
                               lookupItem(row.rowId);
                             }
                           }}
-                          placeholder="Enter item code"
+                          placeholder="Enter item code or 15-digit IMEI"
                           className={`w-full border rounded-md px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 ${
                             row.lookupStatus === "error"
                               ? "border-red-400"
-                              : row.lookupStatus ===
-                                "success"
-                              ? "border-emerald-400"
-                              : "border-slate-300"
+                              : row.lookupStatus === "success"
+                                ? "border-emerald-400"
+                                : "border-slate-300"
                           }`}
                           autoComplete="off"
                         />
 
-                        {row.lookupStatus ===
-                          "loading" && (
+                        {row.lookupStatus === "loading" && (
                           <div className="mt-1 text-xs text-blue-600">
                             Finding item...
                           </div>
@@ -1107,12 +1033,11 @@ export default function NewSalePage() {
                         {row.lookupMessage && (
                           <div
                             className={`mt-1 text-xs ${
-                              row.lookupStatus ===
-                              "error"
+                              row.lookupStatus === "error"
                                 ? "text-red-600"
                                 : row.currentStock <= 0
-                                ? "text-amber-600"
-                                : "text-emerald-600"
+                                  ? "text-amber-600"
+                                  : "text-emerald-600"
                             }`}
                           >
                             {row.lookupMessage}
@@ -1146,9 +1071,7 @@ export default function NewSalePage() {
                             })
                           }
                           placeholder={
-                            row.trackSerial
-                              ? "IMEI from item"
-                              : "Optional"
+                            row.trackSerial ? "IMEI from item" : "Optional"
                           }
                           className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
                         />
@@ -1162,14 +1085,12 @@ export default function NewSalePage() {
                           step="0.001"
                           value={row.quantity}
                           disabled={
-                            row.trackSerial
+                            row.trackSerial || Boolean(row.inventoryUnitId)
                           }
                           onChange={(event) =>
                             updateQuantity(
                               row.rowId,
-                              Number(
-                                event.target.value
-                              )
+                              Number(event.target.value),
                             )
                           }
                           className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
@@ -1177,8 +1098,7 @@ export default function NewSalePage() {
 
                         {row.itemId && (
                           <div className="mt-1 text-xs text-slate-500">
-                            Stock:{" "}
-                            {row.currentStock}
+                            Stock: {row.currentStock}
                           </div>
                         )}
                       </td>
@@ -1198,12 +1118,7 @@ export default function NewSalePage() {
                           step="0.01"
                           value={row.rate}
                           onChange={(event) =>
-                            updateRate(
-                              row.rowId,
-                              Number(
-                                event.target.value
-                              )
-                            )
+                            updateRate(row.rowId, Number(event.target.value))
                           }
                           className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-sm text-right outline-none focus:ring-2 focus:ring-blue-500"
                         />
@@ -1222,9 +1137,7 @@ export default function NewSalePage() {
                               onChange={(event) =>
                                 updateDiscountPercent(
                                   row.rowId,
-                                  Number(
-                                    event.target.value
-                                  )
+                                  Number(event.target.value),
                                 )
                               }
                               className="w-full border border-slate-300 rounded-md px-2.5 py-2 pr-7 text-sm text-right outline-none focus:ring-2 focus:ring-blue-500"
@@ -1242,9 +1155,7 @@ export default function NewSalePage() {
                             onChange={(event) =>
                               updateDiscountAmount(
                                 row.rowId,
-                                Number(
-                                  event.target.value
-                                )
+                                Number(event.target.value),
                               )
                             }
                             className="w-[100px] border border-slate-300 rounded-md px-2.5 py-2 text-sm text-right outline-none focus:ring-2 focus:ring-blue-500"
@@ -1265,13 +1176,7 @@ export default function NewSalePage() {
                             updateRow(row.rowId, {
                               gstRate: Math.min(
                                 100,
-                                Math.max(
-                                  0,
-                                  Number(
-                                    event.target
-                                      .value
-                                  ) || 0
-                                )
+                                Math.max(0, Number(event.target.value) || 0),
                               ),
                             })
                           }
@@ -1282,17 +1187,12 @@ export default function NewSalePage() {
                       {/* AMOUNT */}
                       <td className="px-3 py-3 min-w-[140px] text-right">
                         <div className="font-semibold text-slate-900">
-                          {formatMoney(
-                            calculated.amount
-                          )}
+                          {formatMoney(calculated.amount)}
                         </div>
 
                         {row.itemId && (
                           <div className="text-xs text-slate-500 mt-1">
-                            Tax{" "}
-                            {formatMoney(
-                              calculated.taxAmount
-                            )}
+                            Tax {formatMoney(calculated.taxAmount)}
                           </div>
                         )}
                       </td>
@@ -1329,64 +1229,38 @@ export default function NewSalePage() {
 
             <div className="px-4 py-4 space-y-3 text-sm">
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Total Quantity
-                </span>
-                <span className="font-medium">
-                  {totals.quantity}
-                </span>
+                <span className="text-slate-500">Total Quantity</span>
+                <span className="font-medium">{totals.quantity}</span>
               </div>
 
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Subtotal
-                </span>
-                <span>
-                  {formatMoney(totals.subtotal)}
-                </span>
+                <span className="text-slate-500">Subtotal</span>
+                <span>{formatMoney(totals.subtotal)}</span>
               </div>
 
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Discount
-                </span>
-                <span>
-                  {formatMoney(totals.discount)}
-                </span>
+                <span className="text-slate-500">Discount</span>
+                <span>{formatMoney(totals.discount)}</span>
               </div>
 
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Taxable Amount
-                </span>
-                <span>
-                  {formatMoney(totals.taxable)}
-                </span>
+                <span className="text-slate-500">Taxable Amount</span>
+                <span>{formatMoney(totals.taxable)}</span>
               </div>
 
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  GST
-                </span>
-                <span>
-                  {formatMoney(totals.tax)}
-                </span>
+                <span className="text-slate-500">GST</span>
+                <span>{formatMoney(totals.tax)}</span>
               </div>
 
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Round Off
-                </span>
-                <span>
-                  {formatMoney(totals.roundOff)}
-                </span>
+                <span className="text-slate-500">Round Off</span>
+                <span>{formatMoney(totals.roundOff)}</span>
               </div>
 
               <div className="border-t border-slate-200 pt-3 flex justify-between font-semibold text-base">
                 <span>Total</span>
-                <span>
-                  {formatMoney(totals.grandTotal)}
-                </span>
+                <span>{formatMoney(totals.grandTotal)}</span>
               </div>
             </div>
           </div>
@@ -1412,9 +1286,7 @@ export default function NewSalePage() {
               id="terms"
               rows={4}
               value={terms}
-              onChange={(event) =>
-                setTerms(event.target.value)
-              }
+              onChange={(event) => setTerms(event.target.value)}
               placeholder="Terms configured in business settings will appear here."
               className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
@@ -1434,28 +1306,14 @@ export default function NewSalePage() {
                 <select
                   id="paymentMethod"
                   value={paymentMethod}
-                  onChange={(event) =>
-                    setPaymentMethod(
-                      event.target.value
-                    )
-                  }
+                  onChange={(event) => setPaymentMethod(event.target.value)}
                   className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="cash">
-                    Cash
-                  </option>
-                  <option value="upi">
-                    UPI
-                  </option>
-                  <option value="card">
-                    Card
-                  </option>
-                  <option value="bank">
-                    Bank
-                  </option>
-                  <option value="other">
-                    Other
-                  </option>
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI</option>
+                  <option value="card">Card</option>
+                  <option value="bank">Bank</option>
+                  <option value="other">Other</option>
                 </select>
               </div>
 
@@ -1475,14 +1333,7 @@ export default function NewSalePage() {
                   step="0.01"
                   value={paidAmount}
                   onChange={(event) =>
-                    setPaidAmount(
-                      Math.max(
-                        0,
-                        Number(
-                          event.target.value
-                        ) || 0
-                      )
-                    )
+                    setPaidAmount(Math.max(0, Number(event.target.value) || 0))
                   }
                   className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm text-right outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -1500,11 +1351,7 @@ export default function NewSalePage() {
                   id="referenceNo"
                   type="text"
                   value={referenceNo}
-                  onChange={(event) =>
-                    setReferenceNo(
-                      event.target.value
-                    )
-                  }
+                  onChange={(event) => setReferenceNo(event.target.value)}
                   placeholder="Optional"
                   className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -1513,24 +1360,16 @@ export default function NewSalePage() {
 
             <div className="mt-4 space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Received
-                </span>
+                <span className="text-slate-500">Received</span>
                 <span className="font-medium">
-                  {formatMoney(
-                    totals.paidAmount
-                  )}
+                  {formatMoney(totals.paidAmount)}
                 </span>
               </div>
 
               <div className="flex justify-between">
-                <span className="text-slate-500">
-                  Balance
-                </span>
+                <span className="text-slate-500">Balance</span>
                 <span className="font-medium">
-                  {formatMoney(
-                    totals.balanceAmount
-                  )}
+                  {formatMoney(totals.balanceAmount)}
                 </span>
               </div>
             </div>
@@ -1554,9 +1393,7 @@ export default function NewSalePage() {
             disabled={loading}
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading
-              ? "Saving..."
-              : "Save Sale"}
+            {loading ? "Saving..." : "Save Sale"}
           </button>
         </div>
       </div>

@@ -47,7 +47,9 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
   ],
   items: [
     "Name",
+    "Model Name",
     "SKU",
+    "Device Code",
     "Barcode",
     "IMEI",
     "Category ID",
@@ -517,6 +519,8 @@ async function importRows(
           trackBatch: parseBoolean(getField(row, "Track Batch")),
           trackSerial,
           trackExpiry: parseBoolean(getField(row, "Track Expiry")),
+          modelName: optionalValue(getField(row, "Model Name")) ?? name,
+          deviceCode: optionalValue(getField(row, "Device Code")),
         };
 
         if (
@@ -709,34 +713,85 @@ export default function ImportExportPage() {
             item.notes,
           ]),
         ];
-      } else if (selectedModule === "items") {
-        const items = await fetchAllPages<any>((params) => api.items(params));
+     
+} else if (selectedModule === "items") {
+  const items = await fetchAllPages<any>((params) => api.items(params));
 
-        headers = CSV_HEADERS.items;
+  headers = CSV_HEADERS.items;
 
-        rows = items.map((item) => [
-          item.name,
-          item.sku,
-          item.barcode,
-          item.imei,
-          item.category?.id,
-          item.brand?.id,
-          item.unit?.id,
-          item.supplier?.id,
-          item.description,
-          item.purchasePrice,
-          item.salePrice,
-          item.mrp,
-          item.currentStock,
-          item.minimumStock,
-          item.gstRate,
-          item.hsnSac,
-          item.discountPercent,
-          item.trackBatch,
-          item.trackSerial,
-          item.trackExpiry,
-        ]);
-      } else if (selectedModule === "sale-invoices") {
+  const groupedItems = new Map<string, { item: any; stock: number }>();
+
+  items.forEach((item, index) => {
+    const modelName = item.modelName?.trim() || item.name?.trim() || "";
+
+    // Never combine individual serial-tracked devices.
+    const isSerialTracked = Boolean(item.trackSerial || item.imei);
+
+    // Combine only records whose other importable fields match.
+    const groupKey = isSerialTracked
+      ? `serial:${item.id ?? index}`
+      : JSON.stringify({
+          modelName,
+          name: item.name,
+          sku: item.sku,
+          deviceCode: item.deviceCode,
+          barcode: item.barcode,
+          categoryId: item.category?.id,
+          brandId: item.brand?.id,
+          unitId: item.unit?.id,
+          supplierId: item.supplier?.id,
+          description: item.description,
+          purchasePrice: item.purchasePrice,
+          salePrice: item.salePrice,
+          mrp: item.mrp,
+          minimumStock: item.minimumStock,
+          gstRate: item.gstRate,
+          hsnSac: item.hsnSac,
+          discountPercent: item.discountPercent,
+          trackBatch: item.trackBatch,
+          trackSerial: item.trackSerial,
+          trackExpiry: item.trackExpiry,
+        });
+
+    const existing = groupedItems.get(groupKey);
+
+    if (existing) {
+      existing.stock += Number(item.currentStock) || 0;
+    } else {
+      groupedItems.set(groupKey, {
+        item,
+        stock: Number(item.currentStock) || 0,
+      });
+    }
+  });
+
+  rows = Array.from(groupedItems.values()).map(({ item, stock }) => [
+    item.name,
+    item.modelName ?? item.name,
+    item.sku,
+    item.deviceCode,
+    item.barcode,
+    item.imei,
+    item.category?.id,
+    item.brand?.id,
+    item.unit?.id,
+    item.supplier?.id,
+    item.description,
+    item.purchasePrice,
+    item.salePrice,
+    item.mrp,
+    stock,
+    item.minimumStock,
+    item.gstRate,
+    item.hsnSac,
+    item.discountPercent,
+    item.trackBatch,
+    item.trackSerial,
+    item.trackExpiry,
+  ]);
+}
+
+       else if (selectedModule === "sale-invoices") {
         const sales = await fetchAllPages<any>((params) => api.sales(params));
 
         headers = CSV_HEADERS["sale-invoices"];
@@ -861,6 +916,8 @@ export default function ImportExportPage() {
       const itemHeaders = new Set([
         "sku",
         "barcode",
+        "model name",
+        "device code",
         "imei",
         "item number",
         "item no",

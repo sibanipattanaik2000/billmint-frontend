@@ -299,7 +299,8 @@ export const api = {
 
   itemByCode: (sku: string) =>
     request<ApiSuccess<any>>(`/items/code/${encodeURIComponent(sku.trim())}`),
-
+  itemByImei: (imei: string) =>
+    request<ApiSuccess<any>>(`/items/imei/${encodeURIComponent(imei.trim())}`),
   /* =======================================================
      STOCK
   ======================================================= */
@@ -574,7 +575,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-
+  itemModels: () => request<ApiSuccess<any[]>>("/items/models"),
   cancelPurchase: (id: string) =>
     request<ApiSuccess<any>>(`/purchases/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
@@ -692,18 +693,14 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-
-      /* =======================================================
+  /* =======================================================
      SHELF MANAGEMENT
   ======================================================= */
 
-  shelves: () =>
-    request<ApiSuccess<any[]>>("/shelves"),
+  shelves: () => request<ApiSuccess<any[]>>("/shelves"),
 
   shelfStock: (shelfId: string) =>
-    request<ApiSuccess<any>>(
-      `/shelves/${encodeURIComponent(shelfId)}/stock`,
-    ),
+    request<ApiSuccess<any>>(`/shelves/${encodeURIComponent(shelfId)}/stock`),
 
   placeShelfStock: (
     shelfId: string,
@@ -712,13 +709,10 @@ export const api = {
       quantity: number;
     },
   ) =>
-    request<ApiSuccess<any>>(
-      `/shelves/${encodeURIComponent(shelfId)}/stock`,
-      {
-        method: "POST",
-        body: JSON.stringify(data),
-      },
-    ),
+    request<ApiSuccess<any>>(`/shelves/${encodeURIComponent(shelfId)}/stock`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   transferShelfStock: (data: {
     itemId: string;

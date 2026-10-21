@@ -42,7 +42,16 @@ interface Item {
   trackExpiry?: boolean;
 
   status?: string;
-
+  modelName?: string | null;
+  deviceCode?: string | null;
+  inventoryUnits?: {
+    id: string;
+    itemCode: string | null;
+    imei: string | null;
+    serialNumber: string | null;
+    status: string;
+    purchasePrice: number | string | null;
+  }[];
   createdAt?: string;
   updatedAt?: string;
 
@@ -69,7 +78,11 @@ interface Item {
 
   stockMovements?: StockMovement[];
 }
-
+interface ItemModelGroup {
+  modelName: string;
+  totalStock: number;
+  items: Item[];
+}
 interface StockMovement {
   id: string;
   date: string;
@@ -115,14 +128,9 @@ function formatDate(value?: string | null): string {
 }
 
 function formatMovementType(type: string): string {
-  const normalized = type
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .toLowerCase();
+  const normalized = type.replace(/[_-]+/g, " ").trim().toLowerCase();
 
-  return normalized.replace(/\b\w/g, (char) =>
-    char.toUpperCase()
-  );
+  return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function movementQuantity(movement: StockMovement): number {
@@ -145,7 +153,7 @@ export default function ItemsPage() {
 
   const [items, setItems] = useState<Item[]>([]);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
-
+  const [modelGroups, setModelGroups] = useState<ItemModelGroup[]>([]);
   const [search, setSearch] = useState("");
 
   const [page, setPage] = useState(1);
@@ -171,74 +179,82 @@ export default function ItemsPage() {
       setError("");
 
       try {
-        const response =
-          await api.items({
-            page: currentPage,
-            limit,
-            search: currentSearch.trim(),
-          });
+        const response = await api.itemModels();
+        const result = response as unknown as {
+          success: boolean;
+          data: ItemModelGroup[];
+        };
 
-        const result =
-          response as unknown as ItemsResponse;
+        const groups = Array.isArray(result.data) ? result.data : [];
+        setModelGroups(groups);
 
-        const nextItems =
-          Array.isArray(result.data)
-            ? result.data
-            : [];
+        const query = currentSearch.trim().toLowerCase();
 
-        setItems(nextItems);
+        const filteredGroups = groups.filter((group) => {
+          if (group.modelName.toLowerCase().includes(query)) return true;
 
-        setTotal(
-          Number(
-            result.pagination?.total || 0
-          )
+          return group.items.some((item) =>
+            [
+              item.name,
+              item.modelName,
+              item.sku,
+              item.deviceCode,
+              item.barcode,
+              item.imei,
+              item.brand?.name,
+            ].some((value) =>
+              String(value ?? "")
+                .toLowerCase()
+                .includes(query),
+            ),
+          );
+        });
+
+        const nextTotalPages = Math.ceil(filteredGroups.length / limit);
+        const safePage = Math.max(
+          1,
+          Math.min(currentPage, nextTotalPages || 1),
         );
 
-        setTotalPages(
-          Number(
-            result.pagination?.totalPages || 0
-          )
+        setTotal(filteredGroups.length);
+        setTotalPages(nextTotalPages);
+
+        const visibleGroups = filteredGroups.slice(
+          (safePage - 1) * limit,
+          safePage * limit,
         );
 
-        /*
-         * Keep the current selection when possible.
-         * Otherwise select the first item returned.
-         */
+        const allItems = groups.flatMap((group) => group.items);
+        setItems(filteredGroups.flatMap((group) => group.items));
         setSelectedItem((current) => {
-          if (!nextItems.length) {
-            return null;
-          }
+          if (!visibleGroups.length) return null;
 
           if (current) {
-            const matchingItem =
-              nextItems.find(
-                (item) =>
-                  item.id === current.id
-              );
+            const matchingItem = visibleGroups
+              .flatMap((group) => group.items)
+              .find((item) => item.id === current.id);
 
-            if (matchingItem) {
-              return matchingItem;
-            }
+            if (matchingItem) return matchingItem;
           }
 
-          return nextItems[0];
+          return visibleGroups[0].items[0] ?? null;
         });
-      } catch (err) {
-        if (err instanceof ApiError) {
-          setError(err.message);
-        } else {
-          setError(
-            "Unable to load items."
-          );
-        }
 
+        if (safePage !== currentPage) {
+          setPage(safePage);
+        }
+      } catch (err) {
+        setError(
+          err instanceof ApiError ? err.message : "Unable to load items.",
+        );
         setItems([]);
+        setModelGroups([]);
         setSelectedItem(null);
         setTotal(0);
         setTotalPages(0);
       }
     },
-    [limit]
+    [limit],
   );
 
   /*
@@ -249,28 +265,19 @@ export default function ItemsPage() {
 
     setLoading(true);
 
-    const timer =
-      window.setTimeout(async () => {
-        await loadItems(
-          page,
-          search
-        );
+    const timer = window.setTimeout(async () => {
+      await loadItems(page, search);
 
-        if (active) {
-          setLoading(false);
-        }
-      }, 250);
+      if (active) {
+        setLoading(false);
+      }
+    }, 250);
 
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [
-    page,
-    requestVersion,
-    loadItems,
-    search,
-  ]);
+  }, [page, requestVersion, loadItems, search]);
 
   /*
    * Load complete item details when the selected
@@ -290,9 +297,7 @@ export default function ItemsPage() {
       .then((response) => {
         if (!active) return;
 
-        setSelectedItem(
-          response.data as Item
-        );
+        setSelectedItem(response.data as Item);
       })
       .catch(() => {
         /*
@@ -323,10 +328,7 @@ export default function ItemsPage() {
     setError("");
 
     try {
-      await loadItems(
-        page,
-        search
-      );
+      await loadItems(page, search);
     } finally {
       setRefreshing(false);
     }
@@ -338,12 +340,7 @@ export default function ItemsPage() {
     }
 
     return (
-      toNumber(
-        selectedItem.currentStock
-      ) *
-      toNumber(
-        selectedItem.purchasePrice
-      )
+      toNumber(selectedItem.currentStock) * toNumber(selectedItem.purchasePrice)
     );
   }, [selectedItem]);
 
@@ -352,32 +349,31 @@ export default function ItemsPage() {
       return "unknown";
     }
 
-    const currentStock =
-      toNumber(
-        selectedItem.currentStock
-      );
+    const currentStock = toNumber(selectedItem.currentStock);
 
-    const minimumStock =
-      toNumber(
-        selectedItem.minimumStock
-      );
+    const minimumStock = toNumber(selectedItem.minimumStock);
 
     if (currentStock <= 0) {
       return "out";
     }
 
-    if (
-      minimumStock > 0 &&
-      currentStock <= minimumStock
-    ) {
+    if (minimumStock > 0 && currentStock <= minimumStock) {
       return "low";
     }
 
     return "available";
   }, [selectedItem]);
 
-  const movements =
-    selectedItem?.stockMovements || [];
+  const movements = selectedItem?.stockMovements || [];
+
+  const selectedModelGroup = useMemo(() => {
+    if (!selectedItem) return null;
+
+    const modelName =
+      selectedItem.modelName?.trim() || selectedItem.name.trim();
+
+    return modelGroups.find((group) => group.modelName === modelName) ?? null;
+  }, [selectedItem, modelGroups]);
 
   return (
     <div className="flex-1 flex min-h-0 overflow-hidden bg-white">
@@ -390,25 +386,16 @@ export default function ItemsPage() {
         <div className="p-4 border-b border-slate-200">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h1 className="text-lg font-semibold text-slate-900">
-                Items
-              </h1>
+              <h1 className="text-lg font-semibold text-slate-900">Items</h1>
 
               <p className="text-xs text-slate-500 mt-1">
-                {total}{" "}
-                {total === 1
-                  ? "item"
-                  : "items"}
+                {total} {total === 1 ? "item" : "items"}
               </p>
             </div>
 
             <button
               type="button"
-              onClick={() =>
-                router.push(
-                  "/items/new"
-                )
-              }
+              onClick={() => router.push("/items/new")}
               className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -423,11 +410,7 @@ export default function ItemsPage() {
             <input
               type="search"
               value={search}
-              onChange={(event) =>
-                setSearch(
-                  event.target.value
-                )
-              }
+              onChange={(event) => setSearch(event.target.value)}
               placeholder="Search name, code, barcode..."
               className="w-full rounded-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
             />
@@ -440,9 +423,7 @@ export default function ItemsPage() {
             <div className="flex gap-2">
               <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
 
-              <div className="text-xs text-red-700">
-                {error}
-              </div>
+              <div className="text-xs text-red-700">{error}</div>
             </div>
           </div>
         )}
@@ -484,11 +465,7 @@ export default function ItemsPage() {
                 {!search.trim() && (
                   <button
                     type="button"
-                    onClick={() =>
-                      router.push(
-                        "/items/new"
-                      )
-                    }
+                    onClick={() => router.push("/items/new")}
                     className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -498,125 +475,114 @@ export default function ItemsPage() {
               </div>
             </div>
           ) : (
-            items.map((item) => {
-              const stock =
-                toNumber(
-                  item.currentStock
+            modelGroups
+              .filter((group) => {
+                const query = search.trim().toLowerCase();
+
+                return (
+                  group.modelName.toLowerCase().includes(query) ||
+                  group.items.some((item) =>
+                    [
+                      item.name,
+                      item.modelName,
+                      item.sku,
+                      item.deviceCode,
+                      item.barcode,
+                      item.imei,
+                      item.brand?.name,
+                    ].some((value) =>
+                      String(value ?? "")
+                        .toLowerCase()
+                        .includes(query),
+                    ),
+                  )
+                );
+              })
+              .slice((page - 1) * limit, page * limit)
+              .map((group) => {
+                const stock = toNumber(group.totalStock);
+                const selected = group.items.some(
+                  (item) => item.id === selectedItem?.id,
                 );
 
-              const minimum =
-                toNumber(
-                  item.minimumStock
-                );
+                return (
+                  <button
+                    type="button"
+                    key={group.modelName}
+                    onClick={() => {
+                      const firstItem = group.items[0];
+                      if (firstItem) setSelectedItem(firstItem);
+                    }}
+                    className={`w-full border-b border-slate-100 px-4 py-3 text-left transition ${
+                      selected ? "bg-blue-50" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="grid grid-cols-[1fr_auto] gap-3">
+                      <div className="min-w-0">
+                        <div
+                          className={`truncate text-sm ${
+                            selected
+                              ? "font-semibold text-blue-700"
+                              : "font-medium text-slate-800"
+                          }`}
+                        >
+                          {group.modelName}
+                        </div>
 
-              const selected =
-                selectedItem?.id ===
-                item.id;
+                        <div className="mt-1 truncate text-xs text-slate-500">
+                          {group.items.length}{" "}
+                          {group.items.length === 1
+                            ? "item record"
+                            : "item records"}
+                        </div>
+                      </div>
 
-              const stockClass =
-                stock <= 0
-                  ? "text-red-600"
-                  : minimum > 0 &&
-                    stock <= minimum
-                  ? "text-amber-600"
-                  : "text-slate-600";
-
-              return (
-                <button
-                  type="button"
-                  key={item.id}
-                  onClick={() =>
-                    setSelectedItem(
-                      item
-                    )
-                  }
-                  className={`w-full border-b border-slate-100 px-4 py-3 text-left transition ${
-                    selected
-                      ? "bg-blue-50"
-                      : "hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="grid grid-cols-[1fr_auto] gap-3">
-                    <div className="min-w-0">
                       <div
-                        className={`truncate text-sm ${
-                          selected
-                            ? "font-semibold text-blue-700"
-                            : "font-medium text-slate-800"
+                        className={`text-sm font-medium ${
+                          stock <= 0 ? "text-red-600" : "text-slate-600"
                         }`}
                       >
-                        {item.name}
-                      </div>
-
-                      <div className="mt-1 truncate text-xs text-slate-500">
-                        {item.sku ||
-                          item.barcode ||
-                          "No item code"}
+                        {stock}
                       </div>
                     </div>
-
-                    <div
-                      className={`text-sm font-medium ${stockClass}`}
-                    >
-                      {stock}
-                    </div>
-                  </div>
-                </button>
-              );
-            })
+                  </button>
+                );
+              })
           )}
         </div>
 
         {/* Pagination */}
-        {!loading &&
-          totalPages > 1 && (
-            <div className="border-t border-slate-200 px-3 py-3">
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  disabled={page <= 1}
-                  onClick={() =>
-                    setPage(
-                      (current) =>
-                        Math.max(
-                          1,
-                          current - 1
-                        )
-                    )
-                  }
-                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                  Previous
-                </button>
+        {!loading && totalPages > 1 && (
+          <div className="border-t border-slate-200 px-3 py-3">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Previous
+              </button>
 
-                <span className="text-xs text-slate-500">
-                  Page {page} of{" "}
-                  {totalPages}
-                </span>
+              <span className="text-xs text-slate-500">
+                Page {page} of {totalPages}
+              </span>
 
-                <button
-                  type="button"
-                  disabled={
-                    page >= totalPages
-                  }
-                  onClick={() =>
-                    setPage(
-                      (current) =>
-                        Math.min(
-                          totalPages,
-                          current + 1
-                        )
-                    )
-                  }
-                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Next
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() =>
+                  setPage((current) => Math.min(totalPages, current + 1))
+                }
+                className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
             </div>
-          )}
+          </div>
+        )}
       </aside>
 
       {/* =====================================================
@@ -648,22 +614,19 @@ export default function ItemsPage() {
                     {selectedItem.name}
                   </h2>
 
-                  {stockStatus ===
-                    "out" && (
+                  {stockStatus === "out" && (
                     <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
                       Out of stock
                     </span>
                   )}
 
-                  {stockStatus ===
-                    "low" && (
+                  {stockStatus === "low" && (
                     <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
                       Low stock
                     </span>
                   )}
 
-                  {stockStatus ===
-                    "available" && (
+                  {stockStatus === "available" && (
                     <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
                       In stock
                     </span>
@@ -674,16 +637,14 @@ export default function ItemsPage() {
                   <span>
                     Item Code:{" "}
                     <strong className="font-medium text-slate-700">
-                      {selectedItem.sku ||
-                        "—"}
+                      {selectedItem.sku || "—"}
                     </strong>
                   </span>
 
                   <span>
                     Barcode:{" "}
                     <strong className="font-medium text-slate-700">
-                      {selectedItem.barcode ||
-                        "—"}
+                      {selectedItem.barcode || "—"}
                     </strong>
                   </span>
 
@@ -691,9 +652,7 @@ export default function ItemsPage() {
                     <span>
                       HSN/SAC:{" "}
                       <strong className="font-medium text-slate-700">
-                        {
-                          selectedItem.hsnSac
-                        }
+                        {selectedItem.hsnSac}
                       </strong>
                     </span>
                   )}
@@ -704,18 +663,11 @@ export default function ItemsPage() {
                 <button
                   type="button"
                   onClick={refresh}
-                  disabled={
-                    refreshing ||
-                    detailLoading
-                  }
+                  disabled={refreshing || detailLoading}
                   className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   <RefreshCw
-                    className={`h-4 w-4 ${
-                      refreshing
-                        ? "animate-spin"
-                        : ""
-                    }`}
+                    className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
                   />
                   Refresh
                 </button>
@@ -729,11 +681,7 @@ export default function ItemsPage() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    router.push(
-                      `/items/${selectedItem.id}/edit`
-                    )
-                  }
+                  onClick={() => router.push(`/items/${selectedItem.id}/edit`)}
                   className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                 >
                   Adjust Stock
@@ -752,16 +700,10 @@ export default function ItemsPage() {
                 </div>
 
                 <div className="mt-2 text-lg font-semibold text-slate-900">
-                  {formatINR(
-                    toNumber(
-                      selectedItem.salePrice
-                    )
-                  )}
+                  {formatINR(toNumber(selectedItem.salePrice))}
                 </div>
 
-                <div className="mt-1 text-xs text-slate-500">
-                  Selling price
-                </div>
+                <div className="mt-1 text-xs text-slate-500">Selling price</div>
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -770,16 +712,10 @@ export default function ItemsPage() {
                 </div>
 
                 <div className="mt-2 text-lg font-semibold text-slate-900">
-                  {formatINR(
-                    toNumber(
-                      selectedItem.purchasePrice
-                    )
-                  )}
+                  {formatINR(toNumber(selectedItem.purchasePrice))}
                 </div>
 
-                <div className="mt-1 text-xs text-slate-500">
-                  Cost price
-                </div>
+                <div className="mt-1 text-xs text-slate-500">Cost price</div>
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -788,20 +724,14 @@ export default function ItemsPage() {
                 </div>
 
                 <div className="mt-2 text-lg font-semibold text-slate-900">
-                  {toNumber(
-                    selectedItem.currentStock
-                  )}
-                  {selectedItem.unit
-                    ?.shortName
+                  {toNumber(selectedItem.currentStock)}
+                  {selectedItem.unit?.shortName
                     ? ` ${selectedItem.unit.shortName}`
                     : ""}
                 </div>
 
                 <div className="mt-1 text-xs text-slate-500">
-                  Minimum:{" "}
-                  {toNumber(
-                    selectedItem.minimumStock
-                  )}
+                  Minimum: {toNumber(selectedItem.minimumStock)}
                 </div>
               </div>
 
@@ -811,9 +741,7 @@ export default function ItemsPage() {
                 </div>
 
                 <div className="mt-2 text-lg font-semibold text-slate-900">
-                  {formatINR(
-                    stockValue
-                  )}
+                  {formatINR(stockValue)}
                 </div>
 
                 <div className="mt-1 text-xs text-slate-500">
@@ -821,6 +749,121 @@ export default function ItemsPage() {
                 </div>
               </div>
             </div>
+
+            {/* PHYSICAL STOCK REGISTER */}
+            <section className="mb-6 overflow-hidden rounded-lg border border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Physical Stock Units
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Available units recorded against this model.
+                  </p>
+                </div>
+
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                  {selectedModelGroup?.items.reduce(
+                    (total, item) =>
+                      total +
+                      (item.inventoryUnits?.filter(
+                        (unit) =>
+                          unit.status === "AVAILABLE" ||
+                          unit.status === "RETURNED",
+                      ).length ?? 0),
+                    0,
+                  ) ?? 0}{" "}
+                  tracked units
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[700px] text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Item Code
+                      </th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        IMEI
+                      </th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Serial Number
+                      </th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Status
+                      </th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">
+                        Qty
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {(selectedModelGroup?.items ?? []).flatMap((item) =>
+                      (item.inventoryUnits ?? [])
+                        .filter(
+                          (unit) =>
+                            unit.status === "AVAILABLE" ||
+                            unit.status === "RETURNED",
+                        )
+                        .map((unit) => ({ item, unit })),
+                    ).length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-10 text-center">
+                          <Package className="mx-auto h-8 w-8 text-slate-300" />
+                          <p className="mt-2 text-sm font-medium text-slate-700">
+                            No tracked units recorded
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Units will appear here when inventory records
+                            include IMEI or serial tracking.
+                          </p>
+                        </td>
+                      </tr>
+                    ) : (
+                      (selectedModelGroup?.items ?? [])
+                        .flatMap((item) =>
+                          (item.inventoryUnits ?? [])
+                            .filter(
+                              (unit) =>
+                                unit.status === "AVAILABLE" ||
+                                unit.status === "RETURNED",
+                            )
+                            .map((unit) => ({ item, unit })),
+                        )
+                        .map(({ item, unit }) => (
+                          <tr
+                            key={unit.id}
+                            className="border-b border-slate-100 last:border-b-0"
+                          >
+                            <td className="px-4 py-3 font-medium text-slate-800">
+                              {unit.itemCode ||
+                                item.deviceCode ||
+                                item.sku ||
+                                "—"}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                              {unit.imei || "—"}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                              {unit.serialNumber || "—"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
+                                {unit.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-800">
+                              1
+                            </td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
 
             {/* =================================================
                 DETAILS
@@ -835,150 +878,97 @@ export default function ItemsPage() {
 
               <div className="grid grid-cols-1 gap-x-8 gap-y-5 p-5 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
-                  <div className="text-xs text-slate-500">
-                    Item Code
-                  </div>
+                  <div className="text-xs text-slate-500">Item Code</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.sku ||
+                    {selectedItem.sku || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">Barcode</div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.barcode || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">IMEI</div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.imei || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">HSN / SAC</div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.hsnSac || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">Category</div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.category?.name || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">Brand</div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.brand?.name || "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-500">Unit</div>
+                  <div className="mt-1 text-sm font-medium text-slate-800">
+                    {selectedItem.unit?.shortName ||
+                      selectedItem.unit?.name ||
                       "—"}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs text-slate-500">
-                    Barcode
-                  </div>
+                  <div className="text-xs text-slate-500">Supplier</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.barcode ||
-                      "—"}
+                    {selectedItem.supplier?.name || "—"}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs text-slate-500">
-                    IMEI
-                  </div>
+                  <div className="text-xs text-slate-500">GST Rate</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.imei ||
-                      "—"}
+                    {toNumber(selectedItem.gstRate)}%
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs text-slate-500">
-                    HSN / SAC
-                  </div>
+                  <div className="text-xs text-slate-500">MRP</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.hsnSac ||
-                      "—"}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">
-                    Category
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem
-                      .category?.name ||
-                      "—"}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">
-                    Brand
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem
-                      .brand?.name ||
-                      "—"}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">
-                    Unit
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.unit
-                      ?.shortName ||
-                      selectedItem.unit
-                        ?.name ||
-                      "—"}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">
-                    Supplier
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem
-                      .supplier?.name ||
-                      "—"}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">
-                    GST Rate
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-slate-800">
-                    {toNumber(
-                      selectedItem.gstRate
-                    )}
-                    %
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs text-slate-500">
-                    MRP
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.mrp !=
-                    null
-                      ? formatINR(
-                          toNumber(
-                            selectedItem.mrp
-                          )
-                        )
+                    {selectedItem.mrp != null
+                      ? formatINR(toNumber(selectedItem.mrp))
                       : "—"}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs text-slate-500">
-                    Opening Stock
-                  </div>
+                  <div className="text-xs text-slate-500">Opening Stock</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {toNumber(
-                      selectedItem.openingStock
-                    )}
+                    {toNumber(selectedItem.openingStock)}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs text-slate-500">
-                    Default Discount
-                  </div>
+                  <div className="text-xs text-slate-500">Default Discount</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {toNumber(
-                      selectedItem.discountPercent
-                    )}
-                    %
+                    {toNumber(selectedItem.discountPercent)}%
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs text-slate-500">
-                    Batch Tracking
-                  </div>
+                  <div className="text-xs text-slate-500">Batch Tracking</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.trackBatch
-                      ? "Enabled"
-                      : "Disabled"}
+                    {selectedItem.trackBatch ? "Enabled" : "Disabled"}
                   </div>
                 </div>
 
@@ -987,39 +977,29 @@ export default function ItemsPage() {
                     IMEI / Serial Tracking
                   </div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.trackSerial
-                      ? "Enabled"
-                      : "Disabled"}
+                    {selectedItem.trackSerial ? "Enabled" : "Disabled"}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs text-slate-500">
-                    Expiry Tracking
-                  </div>
+                  <div className="text-xs text-slate-500">Expiry Tracking</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">
-                    {selectedItem.trackExpiry
-                      ? "Enabled"
-                      : "Disabled"}
+                    {selectedItem.trackExpiry ? "Enabled" : "Disabled"}
                   </div>
                 </div>
 
                 <div className="sm:col-span-2 xl:col-span-1">
-                  <div className="text-xs text-slate-500">
-                    Status
-                  </div>
+                  <div className="text-xs text-slate-500">Status</div>
 
                   <div className="mt-1">
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
-                        selectedItem.status ===
-                        "ACTIVE"
+                        selectedItem.status === "ACTIVE"
                           ? "bg-emerald-50 text-emerald-700"
                           : "bg-slate-100 text-slate-600"
                       }`}
                     >
-                      {selectedItem.status ||
-                        "UNKNOWN"}
+                      {selectedItem.status || "UNKNOWN"}
                     </span>
                   </div>
                 </div>
@@ -1027,14 +1007,10 @@ export default function ItemsPage() {
 
               {selectedItem.description && (
                 <div className="border-t border-slate-200 px-5 py-4">
-                  <div className="text-xs text-slate-500">
-                    Description
-                  </div>
+                  <div className="text-xs text-slate-500">Description</div>
 
                   <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
-                    {
-                      selectedItem.description
-                    }
+                    {selectedItem.description}
                   </p>
                 </div>
               )}
@@ -1093,13 +1069,9 @@ export default function ItemsPage() {
                     </thead>
 
                     <tbody>
-                      {movements.length ===
-                      0 ? (
+                      {movements.length === 0 ? (
                         <tr>
-                          <td
-                            colSpan={6}
-                            className="px-4 py-12 text-center"
-                          >
+                          <td colSpan={6} className="px-4 py-12 text-center">
                             <Package className="mx-auto h-8 w-8 text-slate-300" />
 
                             <div className="mt-3 text-sm font-medium text-slate-700">
@@ -1112,100 +1084,74 @@ export default function ItemsPage() {
                           </td>
                         </tr>
                       ) : (
-                        movements.map(
-                          (movement) => {
-                            const quantity =
-                              movementQuantity(
-                                movement
-                              );
+                        movements.map((movement) => {
+                          const quantity = movementQuantity(movement);
 
-                            const isIn =
-                              quantity >
-                              0;
+                          const isIn = quantity > 0;
 
-                            return (
-                              <tr
-                                key={
-                                  movement.id
-                                }
-                                className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50"
-                              >
-                                <td className="px-4 py-3">
-                                  <span className="font-medium text-slate-800">
-                                    {formatMovementType(
-                                      movement.type
-                                    )}
-                                  </span>
-                                </td>
+                          return (
+                            <tr
+                              key={movement.id}
+                              className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50"
+                            >
+                              <td className="px-4 py-3">
+                                <span className="font-medium text-slate-800">
+                                  {formatMovementType(movement.type)}
+                                </span>
+                              </td>
 
-                                <td className="px-4 py-3 text-slate-600">
-                                  {movement.referenceType ||
-                                  movement.referenceId ? (
-                                    <div>
-                                      <div className="text-xs font-medium text-slate-700">
-                                        {movement.referenceType
-                                          ? formatMovementType(
-                                              movement.referenceType
-                                            )
-                                          : "Reference"}
-                                      </div>
-
-                                      {movement.referenceId && (
-                                        <div className="mt-0.5 font-mono text-[11px] text-slate-400">
-                                          {
-                                            movement.referenceId
-                                          }
-                                        </div>
-                                      )}
+                              <td className="px-4 py-3 text-slate-600">
+                                {movement.referenceType ||
+                                movement.referenceId ? (
+                                  <div>
+                                    <div className="text-xs font-medium text-slate-700">
+                                      {movement.referenceType
+                                        ? formatMovementType(
+                                            movement.referenceType,
+                                          )
+                                        : "Reference"}
                                     </div>
-                                  ) : (
-                                    "—"
-                                  )}
-                                </td>
 
-                                <td className="px-4 py-3 text-slate-600">
-                                  {formatDate(
-                                    movement.date
-                                  )}
-                                </td>
+                                    {movement.referenceId && (
+                                      <div className="mt-0.5 font-mono text-[11px] text-slate-400">
+                                        {movement.referenceId}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
 
-                                <td className="px-4 py-3 text-right font-medium">
-                                  <span
-                                    className={
-                                      isIn
-                                        ? "text-emerald-600"
-                                        : quantity <
-                                          0
+                              <td className="px-4 py-3 text-slate-600">
+                                {formatDate(movement.date)}
+                              </td>
+
+                              <td className="px-4 py-3 text-right font-medium">
+                                <span
+                                  className={
+                                    isIn
+                                      ? "text-emerald-600"
+                                      : quantity < 0
                                         ? "text-red-600"
                                         : "text-slate-700"
-                                    }
-                                  >
-                                    {isIn
-                                      ? "+"
-                                      : quantity <
-                                        0
-                                      ? ""
-                                      : ""}
-                                    {
-                                      quantity
-                                    }
-                                  </span>
-                                </td>
+                                  }
+                                >
+                                  {isIn ? "+" : quantity < 0 ? "" : ""}
+                                  {quantity}
+                                </span>
+                              </td>
 
-                                <td className="px-4 py-3 text-right font-medium text-slate-800">
-                                  {toNumber(
-                                    movement.balance
-                                  )}
-                                </td>
+                              <td className="px-4 py-3 text-right font-medium text-slate-800">
+                                {toNumber(movement.balance)}
+                              </td>
 
-                                <td className="px-4 py-3 text-slate-600">
-                                  {movement.notes ||
-                                    "—"}
-                                </td>
-                              </tr>
-                            );
-                          }
-                        )
+                              <td className="px-4 py-3 text-slate-600">
+                                {movement.notes || "—"}
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -1219,21 +1165,11 @@ export default function ItemsPage() {
 
             <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-400">
               {selectedItem.createdAt && (
-                <span>
-                  Created:{" "}
-                  {formatDate(
-                    selectedItem.createdAt
-                  )}
-                </span>
+                <span>Created: {formatDate(selectedItem.createdAt)}</span>
               )}
 
               {selectedItem.updatedAt && (
-                <span>
-                  Last updated:{" "}
-                  {formatDate(
-                    selectedItem.updatedAt
-                  )}
-                </span>
+                <span>Last updated: {formatDate(selectedItem.updatedAt)}</span>
               )}
             </div>
           </div>
