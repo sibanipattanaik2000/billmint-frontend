@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
 } from "lucide-react";
 import { ApiError, api, formatINR } from "@/lib/api";
 
@@ -152,6 +153,7 @@ export default function ItemsPage() {
   const router = useRouter();
 
   const [items, setItems] = useState<Item[]>([]);
+  const [deletingItem, setDeletingItem] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [modelGroups, setModelGroups] = useState<ItemModelGroup[]>([]);
   const [search, setSearch] = useState("");
@@ -256,7 +258,34 @@ export default function ItemsPage() {
     },
     [limit],
   );
+  const handleDeleteItem = async () => {
+    if (!selectedItem || deletingItem) return;
 
+    const confirmed = window.confirm(
+      `Permanently delete "${selectedItem.name}"?\n\n` +
+        "This cannot be undone. Items linked to transactions will be protected.",
+    );
+
+    if (!confirmed) return;
+
+    const itemId = selectedItem.id;
+
+    setDeletingItem(true);
+    setError("");
+
+    try {
+      await api.deleteItem(itemId);
+
+      setSelectedItem(null);
+      setRequestVersion((version) => version + 1);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Unable to delete this item.",
+      );
+    } finally {
+      setDeletingItem(false);
+    }
+  };
   /*
    * Initial load + page changes.
    */
@@ -685,6 +714,15 @@ export default function ItemsPage() {
                   className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                 >
                   Adjust Stock
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteItem}
+                  disabled={deletingItem || detailLoading}
+                  className="inline-flex items-center gap-2 rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {deletingItem ? "Deleting..." : "Delete"}
                 </button>
               </div>
             </div>
