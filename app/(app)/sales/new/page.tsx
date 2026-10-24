@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ApiError, api } from "@/lib/api";
 
 interface Customer {
@@ -151,7 +151,12 @@ function roundMoney(value: number): number {
 
 export default function NewSalePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editSaleId = searchParams.get("edit");
+  const isEditMode = Boolean(editSaleId);
 
+  const [originalInvoiceNumber, setOriginalInvoiceNumber] = useState("");
+  const [loadingExistingSale, setLoadingExistingSale] = useState(false);
   /* =========================================================
      CUSTOMER
   ========================================================= */
@@ -225,7 +230,126 @@ export default function NewSalePage() {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    if (!editSaleId) return;
 
+    let active = true;
+
+    async function loadSaleForEditing() {
+      setLoadingExistingSale(true);
+      setPageError("");
+
+      try {
+        const response = await api.sale(editSaleId!);
+        const sale = response?.data;
+
+        if (!sale) {
+          throw new Error("Invoice not found.");
+        }
+
+        if (String(sale.status).toUpperCase() !== "DRAFT") {
+          throw new Error(
+            "Only draft invoices can currently be edited. Cancelled or finalized invoices must not be overwritten because that could corrupt stock and payment records.",
+          );
+        }
+
+        if (!active) return;
+
+        setOriginalInvoiceNumber(sale.invoiceNumber || "");
+
+        const saleDate = sale.date ? new Date(sale.date) : new Date();
+
+        setInvoiceDate(
+          formatDateForInput(
+            Number.isNaN(saleDate.getTime()) ? new Date() : saleDate,
+          ),
+        );
+
+        const customer = sale.customer || null;
+
+        setCustomerId(customer?.id || null);
+        setSelectedCustomer(customer);
+        setCustomerSearch(customer?.name || "");
+
+        setPaymentMethod(sale.paymentMethod || "cash");
+        setPaidAmount(numberValue(sale.paidAmount));
+        setTerms(sale.terms || "");
+
+        const paymentReference = String(sale.notes || "").match(
+          /Payment Reference:\s*(.*)/i,
+        );
+
+        setReferenceNo(paymentReference?.[1]?.trim() || "");
+
+        const savedItems = Array.isArray(sale.items) ? sale.items : [];
+
+        if (savedItems.length === 0) {
+          setItems([createEmptyRow()]);
+        } else {
+          setItems(
+            savedItems.map((saved: any): SaleRow => {
+              const item = saved.item || {};
+              const quantity = numberValue(saved.quantity);
+              const rate = numberValue(saved.rate);
+              const discountPercent = numberValue(saved.discountPercent);
+
+              return {
+                ...createEmptyRow(),
+
+                itemId: saved.itemId || item.id || null,
+                itemCode:
+                  item.itemCode ||
+                  item.deviceCode ||
+                  item.sku ||
+                  item.barcode ||
+                  "",
+                barcode: item.barcode || "",
+                name: saved.itemName || item.name || "",
+                imei: saved.inventoryUnits?.[0]?.imei || "",
+                inventoryUnitId: saved.inventoryUnits?.[0]?.id || null,
+
+                quantity,
+                unit: saved.unit || item.unit?.shortName || "",
+                rate,
+
+                discountPercent,
+                discountAmount: numberValue(saved.discountAmount),
+
+                gstRate: numberValue(saved.gstRate),
+                hsnSac: saved.hsnSac || item.hsnSac || "",
+
+                currentStock: numberValue(item.currentStock),
+                trackBatch: Boolean(item.trackBatch),
+                trackSerial: Boolean(item.trackSerial),
+                trackExpiry: Boolean(item.trackExpiry),
+
+                lookupStatus: "success",
+                lookupMessage: "Loaded from saved invoice",
+              };
+            }),
+          );
+        }
+      } catch (error) {
+        if (active) {
+          setPageError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load this invoice.",
+          );
+        }
+      } finally {
+        if (active) {
+          setLoadingExistingSale(false);
+        }
+      }
+    }
+
+    void loadSaleForEditing();
+
+    return () => {
+      active = false;
+    };
+  }, [editSaleId]);
   /* =========================================================
      CUSTOMER SEARCH
   ========================================================= */
@@ -651,139 +775,140 @@ export default function NewSalePage() {
      SAVE SALE
   ========================================================= */
 
-  async function handleSave() {
-    setPageError("");
+async function handleSave() {
+  setPageError("");
 
-    const validRows = items.filter((row) => row.itemId);
+  const validRows = items.filter((row) => row.itemId);
 
-    if (validRows.length === 0) {
-      setPageError("Add at least one valid item using the Item Code.");
+  if (validRows.length === 0) {
+    setPageError("Add at least one valid item using the Item Code.");
+    return;
+  }
+
+  for (const row of validRows) {
+    if (row.quantity <= 0) {
+      setPageError(`Quantity must be greater than zero for "${row.name}".`);
       return;
     }
 
-    for (const row of validRows) {
-      if (!row.itemId) {
-        continue;
-      }
-
-      if (row.quantity <= 0) {
-        setPageError(`Quantity must be greater than zero for "${row.name}".`);
-        return;
-      }
-      if (row.inventoryUnitId && row.quantity !== 1) {
-        setPageError(
-          `The selected IMEI device "${row.name}" must have quantity 1.`,
-        );
-        return;
-      }
-      if (row.trackSerial && row.quantity !== 1) {
-        setPageError(
-          `"${row.name}" is serial/IMEI tracked and must have quantity 1.`,
-        );
-        return;
-      }
-
-      if (row.currentStock >= 0 && row.quantity > row.currentStock) {
-        setPageError(
-          `Insufficient stock for "${row.name}". Available stock: ${row.currentStock}.`,
-        );
-        return;
-      }
-
-      if (row.rate < 0) {
-        setPageError(`Invalid selling rate for "${row.name}".`);
-        return;
-      }
-
-      if (row.discountPercent < 0 || row.discountPercent > 100) {
-        setPageError(`Invalid discount for "${row.name}".`);
-        return;
-      }
-
-      if (row.gstRate < 0 || row.gstRate > 100) {
-        setPageError(`Invalid GST rate for "${row.name}".`);
-        return;
-      }
-    }
-
-    const enteredPaidAmount = numberValue(paidAmount);
-
-    if (enteredPaidAmount < 0) {
-      setPageError("Received amount cannot be negative.");
-      return;
-    }
-
-    if (enteredPaidAmount > totals.grandTotal) {
-      setPageError("Received amount cannot be greater than the invoice total.");
-      return;
-    }
-
-    if (enteredPaidAmount > 0 && !paymentMethod) {
-      setPageError("Select a payment method for the received amount.");
-      return;
-    }
-
-    const saleDate = new Date(`${invoiceDate}T12:00:00`);
-
-    if (Number.isNaN(saleDate.getTime())) {
-      setPageError("Please select a valid invoice date.");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const payload = {
-        customerId,
-
-        date: saleDate.toISOString(),
-
-        items: validRows.map((row) => ({
-          itemId: row.itemId,
-          itemName: row.name,
-          hsnSac: row.hsnSac || undefined,
-          quantity: row.quantity,
-          unit: row.unit || undefined,
-          rate: row.rate,
-          discountPercent: row.discountPercent,
-          gstRate: row.gstRate,
-          inventoryUnitIds: row.inventoryUnitId
-            ? [row.inventoryUnitId]
-            : undefined,
-        })),
-
-        paymentMethod: enteredPaidAmount > 0 ? paymentMethod : undefined,
-
-        paidAmount: enteredPaidAmount,
-
-        terms: terms.trim() || undefined,
-
-        notes: referenceNo.trim()
-          ? `Payment Reference: ${referenceNo.trim()}`
-          : undefined,
-      };
-
-      const response = await api.createSale(payload);
-
-      const createdSale = response.data;
-
-      router.push(
-        createdSale?.id
-          ? `/sales?created=${encodeURIComponent(
-              createdSale.invoiceNumber || createdSale.id,
-            )}`
-          : "/sales",
+    if (row.inventoryUnitId && row.quantity !== 1) {
+      setPageError(
+        `The selected IMEI device "${row.name}" must have quantity 1.`,
       );
-    } catch (error) {
-      if (error instanceof ApiError) {
-        setPageError(error.message);
-      } else {
-        setPageError("Unable to create the sale. Please try again.");
-      }
-    } finally {
-      setLoading(false);
+      return;
+    }
+
+    if (row.trackSerial && row.quantity !== 1) {
+      setPageError(
+        `"${row.name}" is serial/IMEI tracked and must have quantity 1.`,
+      );
+      return;
+    }
+
+    if (row.currentStock >= 0 && row.quantity > row.currentStock) {
+      setPageError(
+        `Insufficient stock for "${row.name}". Available stock: ${row.currentStock}.`,
+      );
+      return;
+    }
+
+    if (row.rate < 0) {
+      setPageError(`Invalid selling rate for "${row.name}".`);
+      return;
+    }
+
+    if (row.discountPercent < 0 || row.discountPercent > 100) {
+      setPageError(`Invalid discount for "${row.name}".`);
+      return;
+    }
+
+    if (row.gstRate < 0 || row.gstRate > 100) {
+      setPageError(`Invalid GST rate for "${row.name}".`);
+      return;
     }
   }
+
+  const enteredPaidAmount = numberValue(paidAmount);
+
+  if (enteredPaidAmount < 0) {
+    setPageError("Received amount cannot be negative.");
+    return;
+  }
+
+  if (enteredPaidAmount > totals.grandTotal) {
+    setPageError("Received amount cannot be greater than the invoice total.");
+    return;
+  }
+
+  if (enteredPaidAmount > 0 && !paymentMethod) {
+    setPageError("Select a payment method for the received amount.");
+    return;
+  }
+
+  const saleDate = new Date(`${invoiceDate}T12:00:00`);
+
+  if (Number.isNaN(saleDate.getTime())) {
+    setPageError("Please select a valid invoice date.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const payload = {
+      customerId,
+      date: saleDate.toISOString(),
+
+      items: validRows.map((row) => ({
+        itemId: row.itemId,
+        itemName: row.name,
+        hsnSac: row.hsnSac || undefined,
+        quantity: row.quantity,
+        unit: row.unit || undefined,
+        rate: row.rate,
+        discountPercent: row.discountPercent,
+        gstRate: row.gstRate,
+        inventoryUnitIds: row.inventoryUnitId
+          ? [row.inventoryUnitId]
+          : undefined,
+      })),
+
+      paymentMethod: enteredPaidAmount > 0 ? paymentMethod : undefined,
+      paidAmount: enteredPaidAmount,
+      terms: terms.trim() || undefined,
+
+      notes: referenceNo.trim()
+        ? `Payment Reference: ${referenceNo.trim()}`
+        : undefined,
+    };
+
+    const response = isEditMode
+      ? await api.updateSale(editSaleId!, payload)
+      : await api.createSale(payload);
+
+    const savedSale = response?.data;
+
+    router.push(
+      savedSale?.id
+        ? `/sales?${isEditMode ? "updated" : "created"}=${encodeURIComponent(
+            savedSale.invoiceNumber || savedSale.id,
+          )}`
+        : "/sales",
+    );
+  } catch (error) {
+    if (error instanceof ApiError) {
+      setPageError(error.message);
+    } else {
+      setPageError(
+        isEditMode
+          ? "Unable to update the invoice. Please try again."
+          : "Unable to create the sale. Please try again.",
+      );
+    }
+  } finally {
+    setLoading(false);
+  }
+}
 
   /* =========================================================
      RENDER
