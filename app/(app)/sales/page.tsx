@@ -50,11 +50,7 @@ function toNumber(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
-  if (
-    value &&
-    typeof value === "object" &&
-    "toString" in value
-  ) {
+  if (value && typeof value === "object" && "toString" in value) {
     const parsed = Number(String(value));
     return Number.isFinite(parsed) ? parsed : 0;
   }
@@ -216,20 +212,17 @@ export default function SaleInvoicesPage() {
       invoice.partyName.toLowerCase().includes(query) ||
       invoice.invoiceNo.toLowerCase().includes(query);
 
-    const matchesFromDate = !fromDate || (!!invoiceDate && invoiceDate >= fromDate);
+    const matchesFromDate =
+      !fromDate || (!!invoiceDate && invoiceDate >= fromDate);
     const matchesToDate = !toDate || (!!invoiceDate && invoiceDate <= toDate);
 
     const matchesStatus =
-      statusFilter === "ALL" ||
-      invoice.status.toUpperCase() === statusFilter;
+      statusFilter === "ALL" || invoice.status.toUpperCase() === statusFilter;
 
     return matchesSearch && matchesFromDate && matchesToDate && matchesStatus;
   });
 
-  const totalSales = filtered.reduce(
-    (sum, invoice) => sum + invoice.amount,
-    0,
-  );
+  const totalSales = filtered.reduce((sum, invoice) => sum + invoice.amount, 0);
 
   const totalBalance = filtered.reduce(
     (sum, invoice) => sum + invoice.balance,
@@ -377,133 +370,550 @@ export default function SaleInvoicesPage() {
     }
   };
 
-  const handleRowPrint = (invoice: SaleInvoice) => {
-    const printWindow = window.open("", "_blank", "width=900,height=700");
+const handleRowPrint = async (invoice: SaleInvoice) => {
+  try {
+    // Fetch the complete, real sale record from the backend.
+    const response = await api.sale(invoice.id);
+    const sale = response?.data as any;
+
+    if (!sale) {
+      alert("Unable to fetch the complete invoice details.");
+      return;
+    }
+
+    const esc = (value: unknown): string =>
+      escapeHtml(value == null || value === "" ? "—" : String(value));
+
+    const money = (value: unknown): string =>
+      formatINR(toNumber(value)).replace(/^₹\s?/, "");
+
+    const dateValue = sale.date ? new Date(sale.date) : new Date();
+    const invoiceDate = Number.isNaN(dateValue.getTime())
+      ? esc(invoice.date)
+      : dateValue.toLocaleDateString("en-GB");
+
+    const invoiceTime = Number.isNaN(dateValue.getTime())
+      ? ""
+      : dateValue.toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+
+    const invoiceNumber = esc(sale.invoiceNumber ?? invoice.invoiceNo);
+    const customerName = esc(
+      sale.customer?.name ?? invoice.partyName ?? "Walk-in Customer",
+    );
+
+    const customerAddress = esc(
+      sale.customer?.address ??
+        sale.customer?.billingAddress ??
+        sale.customer?.city ??
+        "",
+    );
+
+    const customerPhone = esc(
+      sale.customer?.phone ?? sale.customer?.mobile ?? "",
+    );
+
+    const items: any[] = Array.isArray(sale.items)
+      ? sale.items
+      : Array.isArray(sale.saleItems)
+        ? sale.saleItems
+        : [];
+
+    if (items.length === 0) {
+      alert(
+        "This sale record has no item details. Please check the sale details API before printing.",
+      );
+      return;
+    }
+
+    const itemRows = items
+      .map((item: any, index: number) => {
+        const product = item.item ?? item.product ?? {};
+        const inventoryUnit = item.inventoryUnit ?? item.inventoryUnits?.[0] ?? {};
+
+        const itemName =
+          item.itemName ??
+          item.name ??
+          product.name ??
+          product.modelName ??
+          "Item";
+
+        const itemCode =
+          item.itemCode ??
+          item.sku ??
+          product.itemCode ??
+          product.sku ??
+          "";
+
+        const imei =
+          item.imei ??
+          item.serialNumber ??
+          inventoryUnit.imei ??
+          inventoryUnit.serialNumber ??
+          "";
+
+        const quantity = toNumber(item.quantity) || 1;
+        const rate = toNumber(
+          item.rate ?? item.unitPrice ?? item.price ?? item.sellingPrice,
+        );
+        const amount = toNumber(
+          item.amount ?? item.total ?? item.lineTotal,
+        ) || quantity * rate;
+
+        return `
+          <tr>
+            <td class="number">${index + 1}</td>
+            <td class="item-name">
+              <strong>${esc(itemName)}</strong>
+              ${itemCode ? `<div class="subline">ITEM CODE: ${esc(itemCode)}</div>` : ""}
+              ${imei ? `<div class="subline">IMEI: ${esc(imei)}</div>` : ""}
+            </td>
+            <td class="center">${quantity}</td>
+            <td class="right">₹ ${money(rate)}</td>
+            <td class="right">₹ ${money(amount)}</td>
+            <td>${esc(itemCode)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const quantityTotal = items.reduce(
+      (sum: number, item: any) => sum + (toNumber(item.quantity) || 1),
+      0,
+    );
+
+    const subtotal = toNumber(sale.subtotal ?? sale.grandTotal);
+    const total = toNumber(sale.grandTotal ?? sale.totalAmount);
+    const received = toNumber(sale.paidAmount);
+    const balance = Math.max(
+      0,
+      toNumber(sale.balanceAmount ?? total - received),
+    );
+
+    const amountInWords = (amount: number): string => {
+      if (amount === 0) return "Zero Rupees only";
+
+      const ones = [
+        "",
+        "One",
+        "Two",
+        "Three",
+        "Four",
+        "Five",
+        "Six",
+        "Seven",
+        "Eight",
+        "Nine",
+        "Ten",
+        "Eleven",
+        "Twelve",
+        "Thirteen",
+        "Fourteen",
+        "Fifteen",
+        "Sixteen",
+        "Seventeen",
+        "Eighteen",
+        "Nineteen",
+      ];
+      const tens = [
+        "",
+        "",
+        "Twenty",
+        "Thirty",
+        "Forty",
+        "Fifty",
+        "Sixty",
+        "Seventy",
+        "Eighty",
+        "Ninety",
+      ];
+
+      const underThousand = (n: number): string => {
+        let result = "";
+        if (n >= 100) {
+          result += `${ones[Math.floor(n / 100)]} Hundred `;
+          n %= 100;
+        }
+        if (n >= 20) {
+          result += `${tens[Math.floor(n / 10)]} `;
+          n %= 10;
+        }
+        if (n > 0) result += `${ones[n]} `;
+        return result.trim();
+      };
+
+      let n = Math.floor(Math.abs(amount));
+      const parts: string[] = [];
+
+      const crore = Math.floor(n / 10000000);
+      if (crore) {
+        parts.push(`${underThousand(crore)} Crore`);
+        n %= 10000000;
+      }
+
+      const lakh = Math.floor(n / 100000);
+      if (lakh) {
+        parts.push(`${underThousand(lakh)} Lakh`);
+        n %= 100000;
+      }
+
+      const thousand = Math.floor(n / 1000);
+      if (thousand) {
+        parts.push(`${underThousand(thousand)} Thousand`);
+        n %= 1000;
+      }
+
+      if (n) parts.push(underThousand(n));
+
+      return `${parts.join(" ")} Rupees only`;
+    };
+
+    const paymentMode = esc(
+      String(sale.paymentMethod ?? invoice.paymentType ?? "Credit")
+        .replaceAll("_", " ")
+        .replaceAll("-", " "),
+    );
+
+    const printWindow = window.open("", "_blank", "width=1000,height=800");
 
     if (!printWindow) {
       alert("Please allow pop-ups in your browser to print the invoice.");
       return;
     }
 
-    const safeInvoiceNo = escapeHtml(invoice.invoiceNo);
-    const safeDate = escapeHtml(invoice.date);
-    const safePartyName = escapeHtml(invoice.partyName);
-    const safePaymentType = escapeHtml(invoice.paymentType);
-    const safeStatus = escapeHtml(invoice.status);
-    const safeTransaction = escapeHtml(invoice.transaction);
-    const amount = formatINR(invoice.amount);
-    const balance = formatINR(invoice.balance);
-    const received = formatINR(Math.max(0, invoice.amount - invoice.balance));
-
     printWindow.document.open();
     printWindow.document.write(`
       <!DOCTYPE html>
       <html lang="en">
-        <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>Sale Invoice ${safeInvoiceNo}</title>
-          <style>
-            * { box-sizing: border-box; }
-            body {
-              margin: 0;
-              padding: 36px;
-              color: #222;
-              background: #fff;
-              font-family: Arial, Helvetica, sans-serif;
+      <head>
+        <meta charset="UTF-8" />
+        <title>Surebuy Invoice ${invoiceNumber}</title>
+        <style>
+          @page {
+            size: A4;
+            margin: 12mm 14mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            color: #111;
+            background: #fff;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 12px;
+          }
+
+          .invoice-header {
+            position: relative;
+            border-bottom: 1px solid #555;
+            padding: 0 6px 6px;
+          }
+
+          .store-name {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 5px;
+          }
+
+          .store-line {
+            font-size: 12px;
+            line-height: 19px;
+          }
+
+          .logo {
+            position: absolute;
+            right: 15px;
+            top: 16px;
+            width: 65px;
+            max-height: 55px;
+            object-fit: contain;
+          }
+
+          .invoice-title {
+            text-align: center;
+            font-size: 23px;
+            font-weight: 700;
+            margin: 15px 0 22px;
+          }
+
+          .billing {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            margin: 0 4px 12px;
+          }
+
+          .section-heading {
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 10px;
+          }
+
+          .customer-name {
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 8px;
+          }
+
+          .customer-line {
+            line-height: 19px;
+          }
+
+          .invoice-meta {
+            text-align: right;
+          }
+
+          .invoice-meta div {
+            line-height: 24px;
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+          }
+
+          thead {
+            border-top: 1px solid #888;
+            border-bottom: 1px solid #888;
+          }
+
+          th {
+            text-align: left;
+            padding: 6px 4px;
+            font-size: 12px;
+            font-weight: 700;
+          }
+
+          td {
+            padding: 7px 4px;
+            vertical-align: top;
+            overflow-wrap: anywhere;
+          }
+
+          .number { width: 5%; }
+          .item-name { width: 39%; }
+          .qty { width: 8%; }
+          .rate { width: 15%; }
+          .amount { width: 15%; }
+          .code { width: 18%; }
+
+          .item-name strong {
+            font-size: 12px;
+            line-height: 16px;
+          }
+
+          .subline {
+            font-size: 10px;
+            margin-top: 3px;
+            line-height: 13px;
+          }
+
+          .center { text-align: center; }
+          .right { text-align: right; }
+
+          .total-row {
+            border-top: 1px solid #888;
+            border-bottom: 1px solid #888;
+            font-weight: 700;
+          }
+
+          .total-row td {
+            padding-top: 7px;
+            padding-bottom: 7px;
+          }
+
+          .bottom-section {
+            display: grid;
+            grid-template-columns: 1.05fr 1fr;
+            gap: 28px;
+            margin-top: 23px;
+            page-break-inside: avoid;
+          }
+
+          .bottom-heading {
+            font-weight: 700;
+            font-size: 13px;
+            margin-bottom: 9px;
+          }
+
+          .words {
+            line-height: 20px;
+            margin-bottom: 18px;
+          }
+
+          .terms p {
+            line-height: 17px;
+            margin: 0 0 12px;
+          }
+
+          .summary-line {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 11px;
+            font-size: 12px;
+          }
+
+          .summary-line.total {
+            font-weight: 700;
+          }
+
+          .summary-line.balance {
+            border-bottom: 1px solid #888;
+            padding-bottom: 7px;
+          }
+
+          .signature {
+            margin-top: 25px;
+            text-align: center;
+            page-break-inside: avoid;
+          }
+
+          .signature-for {
+            margin-bottom: 18px;
+          }
+
+          .signature-space {
+            height: 44px;
+          }
+
+          .signature-label {
+            font-weight: 700;
+            font-size: 13px;
+          }
+
+          .page-header {
+            display: none;
+          }
+
+          @media print {
+            .page-header {
+              display: block;
             }
-            .invoice { max-width: 800px; margin: 0 auto; }
-            .header {
-              display: flex;
-              justify-content: space-between;
-              gap: 20px;
-              border-bottom: 2px solid #222;
-              padding-bottom: 20px;
-              margin-bottom: 28px;
+
+            tr {
+              break-inside: avoid;
             }
-            .brand { font-size: 28px; font-weight: 700; }
-            .title { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
-            .details {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 12px;
-              margin-bottom: 24px;
-            }
-            .detail { border: 1px solid #ddd; padding: 14px; border-radius: 6px; }
-            .label { color: #777; font-size: 11px; margin-bottom: 6px; }
-            .value { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-            th { background: #f5f5f5; }
-            .right { text-align: right; }
-            .total { margin: 24px 0 0 auto; width: 300px; max-width: 100%; }
-            .total-row { display: flex; justify-content: space-between; gap: 20px; padding: 8px 0; }
-            .grand-total { font-size: 19px; font-weight: 700; border-top: 2px solid #222; padding-top: 12px; }
-            .footer { margin-top: 48px; text-align: center; color: #777; font-size: 12px; }
-            @media print { body { padding: 15px; } }
-          </style>
-        </head>
-        <body>
-          <main class="invoice">
-            <header class="header">
-              <div class="brand">BillMint</div>
-              <div>
-                <div class="title">SALE INVOICE</div>
-                <div>Invoice No: ${safeInvoiceNo}</div>
-                <div>Date: ${safeDate}</div>
-              </div>
-            </header>
+          }
+        </style>
+      </head>
+      <body>
+        <header class="invoice-header">
+          <div class="store-name">SUREBUY STORE</div>
+          <div class="store-line">SIRIPUR SQUARE NEAR MIO AMORE CAKE SHOP BHUBANESWAR,</div>
+          <div class="store-line">PIN-751003</div>
+          <div class="store-line">Phone no. : 7853976501, 8079978830</div>
+          <div class="store-line">Email : surebuy178@gmail.com</div>
+        </header>
 
-            <section class="details">
-              <div class="detail">
-                <div class="label">PARTY NAME</div>
-                <div class="value">${safePartyName}</div>
-              </div>
-              <div class="detail">
-                <div class="label">PAYMENT TYPE</div>
-                <div class="value">${safePaymentType}</div>
-              </div>
-              <div class="detail">
-                <div class="label">TRANSACTION</div>
-                <div class="value">${safeTransaction}</div>
-              </div>
-              <div class="detail">
-                <div class="label">STATUS</div>
-                <div class="value">${safeStatus}</div>
-              </div>
-            </section>
+        <div class="invoice-title">USED MOBILES</div>
 
-            <table>
-              <thead>
-                <tr><th>Description</th><th class="right">Amount</th></tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>Sale Invoice ${safeInvoiceNo}</td>
-                  <td class="right">₹ ${amount}</td>
-                </tr>
-              </tbody>
-            </table>
+        <section class="billing">
+          <div>
+            <div class="section-heading">Bill To</div>
+            <div class="customer-name">${customerName}</div>
+            ${customerAddress !== "—" ? `<div class="customer-line">${customerAddress}</div>` : ""}
+            ${customerPhone !== "—" ? `<div class="customer-line">Contact No. : ${customerPhone}</div>` : ""}
+          </div>
 
-            <section class="total">
-              <div class="total-row"><span>Total Amount</span><strong>₹ ${amount}</strong></div>
-              <div class="total-row"><span>Received</span><strong>₹ ${received}</strong></div>
-              <div class="total-row"><span>Balance</span><strong>₹ ${balance}</strong></div>
-              <div class="total-row grand-total"><span>Invoice Total</span><span>₹ ${amount}</span></div>
-            </section>
+          <div class="invoice-meta">
+            <div class="section-heading">Invoice Details</div>
+            <div>Invoice No. : ${invoiceNumber}</div>
+            <div>Date : ${esc(invoiceDate)}</div>
+            <div>Time : ${esc(invoiceTime)}</div>
+          </div>
+        </section>
 
-            <footer class="footer">Generated by BillMint</footer>
-          </main>
-        </body>
+        <table>
+          <thead>
+            <tr>
+              <th class="number">#</th>
+              <th class="item-name">Item name</th>
+              <th class="qty center">Quantity</th>
+              <th class="rate right">Price/ Unit</th>
+              <th class="amount right">Amount</th>
+              <th class="code">Item Code</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemRows}
+            <tr class="total-row">
+              <td></td>
+              <td>Total</td>
+              <td class="center">${quantityTotal}</td>
+              <td></td>
+              <td class="right">₹ ${money(total)}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <section class="bottom-section">
+          <div>
+            <div class="bottom-heading">Invoice Amount In Words</div>
+            <div class="words">${esc(amountInWords(total))}</div>
+
+            <div class="bottom-heading">Terms and Conditions</div>
+            <div class="terms">
+              <p>*Goods once sold can not be exchanged or money refunded!</p>
+              <p>*we are manufacturer representative only!</p>
+              <p>*All types of problem will be entertain at manufacturers service centre only!</p>
+            </div>
+          </div>
+
+          <div>
+            <div class="summary-line">
+              <span>Sub Total</span>
+              <span>₹ ${money(subtotal)}</span>
+            </div>
+            <div class="summary-line total">
+              <span>Total</span>
+              <span>₹ ${money(total)}</span>
+            </div>
+            <div class="summary-line">
+              <span>Received</span>
+              <span>₹ ${money(received)}</span>
+            </div>
+            <div class="summary-line">
+              <span>Balance</span>
+              <span>₹ ${money(balance)}</span>
+            </div>
+            <div class="summary-line balance">
+              <span>Payment mode</span>
+              <span>${paymentMode}</span>
+            </div>
+
+            <div class="signature">
+              <div class="signature-for">For :SUREBUY STORE</div>
+              <div class="signature-space"></div>
+              <div class="signature-label">Authorized Signatory</div>
+            </div>
+          </div>
+        </section>
+      </body>
       </html>
     `);
     printWindow.document.close();
-    printWindow.focus();
 
     printWindow.onload = () => {
+      printWindow.focus();
       printWindow.print();
     };
-  };
+  } catch (error) {
+    console.error("Invoice printing failed:", error);
+    alert(
+      error instanceof Error
+        ? `Unable to print invoice: ${error.message}`
+        : "Unable to print invoice. Please try again.",
+    );
+  }
+};
 
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
@@ -543,18 +953,34 @@ export default function SaleInvoicesPage() {
           </button>
 
           <button
-            onClick={() => window.print()}
-            title="Print"
-            className="flex items-center gap-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-md font-medium"
+            type="button"
+            onClick={() => {
+              if (filtered.length > 0) {
+                void handleRowPrint(filtered[0]);
+              } else {
+                alert("No invoice is available to print.");
+              }
+            }}
+            disabled={loading || filtered.length === 0}
+            title="Print the first invoice in the current results"
+            className="flex items-center gap-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-md font-medium disabled:opacity-50"
           >
             <Printer size={16} />
             Print
           </button>
 
           <button
-            onClick={() => window.print()}
-            title="Save as PDF"
-            className="flex items-center gap-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-md font-medium"
+            type="button"
+            onClick={() => {
+              if (filtered.length > 0) {
+                void handleRowPrint(filtered[0]);
+              } else {
+                alert("No invoice is available to save as PDF.");
+              }
+            }}
+            disabled={loading || filtered.length === 0}
+            title="Save the first invoice in the current results as PDF"
+            className="flex items-center gap-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-md font-medium disabled:opacity-50"
           >
             <FileText size={16} />
             PDF
@@ -624,9 +1050,7 @@ export default function SaleInvoicesPage() {
       <div className="px-6 py-4 flex gap-10 border-b flex-wrap">
         <div>
           <div className="text-sm text-gray-500">Total Sales Amount</div>
-          <div className="text-2xl font-bold">
-            ₹ {formatINR(totalSales)}
-          </div>
+          <div className="text-2xl font-bold">₹ {formatINR(totalSales)}</div>
         </div>
 
         <div>
@@ -721,88 +1145,101 @@ export default function SaleInvoicesPage() {
                     Loading sale invoices from the server…
                   </td>
                 </tr>
-              ) : !error && filtered.map((invoice) => (
-                <tr key={invoice.id} className="border-b hover:bg-blue-50">
-                  <td className="py-3 pr-3 whitespace-nowrap">{invoice.date}</td>
+              ) : (
+                !error &&
+                filtered.map((invoice) => (
+                  <tr key={invoice.id} className="border-b hover:bg-blue-50">
+                    <td className="py-3 pr-3 whitespace-nowrap">
+                      {invoice.date}
+                    </td>
 
-                  <td
-                    className="py-3 pr-3 text-blue-600 hover:underline cursor-pointer"
-                    onClick={() => router.push(`/sales/${encodeURIComponent(invoice.id)}`)}
-                  >
-                    {invoice.invoiceNo}
-                  </td>
+                    <td
+                      className="py-3 pr-3 text-blue-600 hover:underline cursor-pointer"
+                      onClick={() =>
+                        router.push(`/sales/${encodeURIComponent(invoice.id)}`)
+                      }
+                    >
+                      {invoice.invoiceNo}
+                    </td>
 
-                  <td
-                    className="py-3 pr-3 font-medium cursor-pointer"
-                    onClick={() => router.push(`/sales/${encodeURIComponent(invoice.id)}`)}
-                  >
-                    {invoice.partyName}
-                  </td>
+                    <td
+                      className="py-3 pr-3 font-medium cursor-pointer"
+                      onClick={() =>
+                        router.push(`/sales/${encodeURIComponent(invoice.id)}`)
+                      }
+                    >
+                      {invoice.partyName}
+                    </td>
 
-                  <td className="py-3 pr-3 text-blue-600">
-                    {invoice.transaction}
-                  </td>
+                    <td className="py-3 pr-3 text-blue-600">
+                      {invoice.transaction}
+                    </td>
 
-                  <td className="py-3 pr-3">{invoice.paymentType}</td>
+                    <td className="py-3 pr-3">{invoice.paymentType}</td>
 
-                  <td className="py-3 pr-3 text-right whitespace-nowrap">
-                    ₹ {formatINR(invoice.amount)}
-                  </td>
+                    <td className="py-3 pr-3 text-right whitespace-nowrap">
+                      ₹ {formatINR(invoice.amount)}
+                    </td>
 
-                  <td
-                    className={`py-3 pr-3 text-right whitespace-nowrap ${
-                      invoice.balance > 0 ? "text-red-500" : ""
-                    }`}
-                  >
-                    ₹ {formatINR(invoice.balance)}
-                  </td>
+                    <td
+                      className={`py-3 pr-3 text-right whitespace-nowrap ${
+                        invoice.balance > 0 ? "text-red-500" : ""
+                      }`}
+                    >
+                      ₹ {formatINR(invoice.balance)}
+                    </td>
 
-                  <td
-                    className={`py-3 pr-3 font-medium ${
-                      invoice.status === "Paid"
-                        ? "text-green-600"
-                        : invoice.status === "Cancelled"
-                          ? "text-gray-500"
-                          : invoice.status === "Draft"
-                            ? "text-amber-600"
-                            : "text-red-500"
-                    }`}
-                  >
-                    {invoice.status}
-                  </td>
+                    <td
+                      className={`py-3 pr-3 font-medium ${
+                        invoice.status === "Paid"
+                          ? "text-green-600"
+                          : invoice.status === "Cancelled"
+                            ? "text-gray-500"
+                            : invoice.status === "Draft"
+                              ? "text-amber-600"
+                              : "text-red-500"
+                      }`}
+                    >
+                      {invoice.status}
+                    </td>
 
-                  <td className="py-3">
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => void handleShare(invoice)}
-                        title="Share Invoice"
-                        className="p-1.5 rounded hover:bg-blue-100 text-blue-600"
-                      >
-                        <Share2 size={16} />
-                      </button>
+                    <td className="py-3">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void handleShare(invoice)}
+                          title="Share Invoice"
+                          className="p-1.5 rounded hover:bg-blue-100 text-blue-600"
+                        >
+                          <Share2 size={16} />
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handleRowPrint(invoice)}
-                        title="Print Invoice"
-                        className="p-1.5 rounded hover:bg-gray-200 text-gray-700"
-                      >
-                        <Printer size={16} />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRowPrint(invoice)}
+                          title="Print Invoice"
+                          className="p-1.5 rounded hover:bg-gray-200 text-gray-700"
+                        >
+                          <Printer size={16} />
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => router.push(`/sales/${encodeURIComponent(invoice.id)}`)}
-                        title="View Invoice"
-                        className="p-1.5 rounded hover:bg-gray-100 text-gray-600"
-                      >
-                        <MoreVertical size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            router.push(
+                              `/sales/${encodeURIComponent(invoice.id)}`,
+                            )
+                          }
+                          title="View Invoice"
+                          className="p-1.5 rounded hover:bg-gray-100 text-gray-600"
+                        >
+                          <MoreVertical size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
 
               {!loading && !error && filtered.length === 0 && (
                 <tr>
@@ -819,7 +1256,8 @@ export default function SaleInvoicesPage() {
 
         {!loading && !error && invoices.length > 100 && (
           <p className="mt-3 text-xs text-gray-500">
-            Showing the first 100 invoices returned by the API. Pagination can be added to load the remaining records.
+            Showing the first 100 invoices returned by the API. Pagination can
+            be added to load the remaining records.
           </p>
         )}
       </div>
