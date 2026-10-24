@@ -160,6 +160,11 @@ export default function SaleInvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    top: number;
+    right: number;
+  } | null>(null);
 
   const loadInvoices = useCallback(async (manualRefresh = false) => {
     if (manualRefresh) {
@@ -370,99 +375,96 @@ export default function SaleInvoicesPage() {
     }
   };
 
-const handleRowPrint = async (invoice: SaleInvoice) => {
-  try {
-    // Fetch the complete, real sale record from the backend.
-    const response = await api.sale(invoice.id);
-    const sale = response?.data as any;
+  const handleRowPrint = async (invoice: SaleInvoice) => {
+    try {
+      // Fetch the complete, real sale record from the backend.
+      const response = await api.sale(invoice.id);
+      const sale = response?.data as any;
 
-    if (!sale) {
-      alert("Unable to fetch the complete invoice details.");
-      return;
-    }
+      if (!sale) {
+        alert("Unable to fetch the complete invoice details.");
+        return;
+      }
 
-    const esc = (value: unknown): string =>
-      escapeHtml(value == null || value === "" ? "—" : String(value));
+      const esc = (value: unknown): string =>
+        escapeHtml(value == null || value === "" ? "—" : String(value));
 
-    const money = (value: unknown): string =>
-      formatINR(toNumber(value)).replace(/^₹\s?/, "");
+      const money = (value: unknown): string =>
+        formatINR(toNumber(value)).replace(/^₹\s?/, "");
 
-    const dateValue = sale.date ? new Date(sale.date) : new Date();
-    const invoiceDate = Number.isNaN(dateValue.getTime())
-      ? esc(invoice.date)
-      : dateValue.toLocaleDateString("en-GB");
+      const dateValue = sale.date ? new Date(sale.date) : new Date();
+      const invoiceDate = Number.isNaN(dateValue.getTime())
+        ? esc(invoice.date)
+        : dateValue.toLocaleDateString("en-GB");
 
-    const invoiceTime = Number.isNaN(dateValue.getTime())
-      ? ""
-      : dateValue.toLocaleTimeString("en-IN", {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+      const invoiceTime = Number.isNaN(dateValue.getTime())
+        ? ""
+        : dateValue.toLocaleTimeString("en-IN", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
 
-    const invoiceNumber = esc(sale.invoiceNumber ?? invoice.invoiceNo);
-    const customerName = esc(
-      sale.customer?.name ?? invoice.partyName ?? "Walk-in Customer",
-    );
-
-    const customerAddress = esc(
-      sale.customer?.address ??
-        sale.customer?.billingAddress ??
-        sale.customer?.city ??
-        "",
-    );
-
-    const customerPhone = esc(
-      sale.customer?.phone ?? sale.customer?.mobile ?? "",
-    );
-
-    const items: any[] = Array.isArray(sale.items)
-      ? sale.items
-      : Array.isArray(sale.saleItems)
-        ? sale.saleItems
-        : [];
-
-    if (items.length === 0) {
-      alert(
-        "This sale record has no item details. Please check the sale details API before printing.",
+      const invoiceNumber = esc(sale.invoiceNumber ?? invoice.invoiceNo);
+      const customerName = esc(
+        sale.customer?.name ?? invoice.partyName ?? "Walk-in Customer",
       );
-      return;
-    }
 
-    const itemRows = items
-      .map((item: any, index: number) => {
-        const product = item.item ?? item.product ?? {};
-        const inventoryUnit = item.inventoryUnit ?? item.inventoryUnits?.[0] ?? {};
+      const customerAddress = esc(
+        sale.customer?.address ??
+          sale.customer?.billingAddress ??
+          sale.customer?.city ??
+          "",
+      );
 
-        const itemName =
-          item.itemName ??
-          item.name ??
-          product.name ??
-          product.modelName ??
-          "Item";
+      const customerPhone = esc(
+        sale.customer?.phone ?? sale.customer?.mobile ?? "",
+      );
 
-        const itemCode =
-          item.itemCode ??
-          item.sku ??
-          product.itemCode ??
-          product.sku ??
-          "";
+      const items: any[] = Array.isArray(sale.items)
+        ? sale.items
+        : Array.isArray(sale.saleItems)
+          ? sale.saleItems
+          : [];
 
-        const imei =
-          item.imei ??
-          item.serialNumber ??
-          inventoryUnit.imei ??
-          inventoryUnit.serialNumber ??
-          "";
-
-        const quantity = toNumber(item.quantity) || 1;
-        const rate = toNumber(
-          item.rate ?? item.unitPrice ?? item.price ?? item.sellingPrice,
+      if (items.length === 0) {
+        alert(
+          "This sale record has no item details. Please check the sale details API before printing.",
         );
-        const amount = toNumber(
-          item.amount ?? item.total ?? item.lineTotal,
-        ) || quantity * rate;
+        return;
+      }
 
-        return `
+      const itemRows = items
+        .map((item: any, index: number) => {
+          const product = item.item ?? item.product ?? {};
+          const inventoryUnit =
+            item.inventoryUnit ?? item.inventoryUnits?.[0] ?? {};
+
+          const itemName =
+            item.itemName ??
+            item.name ??
+            product.name ??
+            product.modelName ??
+            "Item";
+
+          const itemCode =
+            item.itemCode ?? item.sku ?? product.itemCode ?? product.sku ?? "";
+
+          const imei =
+            item.imei ??
+            item.serialNumber ??
+            inventoryUnit.imei ??
+            inventoryUnit.serialNumber ??
+            "";
+
+          const quantity = toNumber(item.quantity) || 1;
+          const rate = toNumber(
+            item.rate ?? item.unitPrice ?? item.price ?? item.sellingPrice,
+          );
+          const amount =
+            toNumber(item.amount ?? item.total ?? item.lineTotal) ||
+            quantity * rate;
+
+          return `
           <tr>
             <td class="number">${index + 1}</td>
             <td class="item-name">
@@ -476,115 +478,115 @@ const handleRowPrint = async (invoice: SaleInvoice) => {
             <td>${esc(itemCode)}</td>
           </tr>
         `;
-      })
-      .join("");
+        })
+        .join("");
 
-    const quantityTotal = items.reduce(
-      (sum: number, item: any) => sum + (toNumber(item.quantity) || 1),
-      0,
-    );
+      const quantityTotal = items.reduce(
+        (sum: number, item: any) => sum + (toNumber(item.quantity) || 1),
+        0,
+      );
 
-    const subtotal = toNumber(sale.subtotal ?? sale.grandTotal);
-    const total = toNumber(sale.grandTotal ?? sale.totalAmount);
-    const received = toNumber(sale.paidAmount);
-    const balance = Math.max(
-      0,
-      toNumber(sale.balanceAmount ?? total - received),
-    );
+      const subtotal = toNumber(sale.subtotal ?? sale.grandTotal);
+      const total = toNumber(sale.grandTotal ?? sale.totalAmount);
+      const received = toNumber(sale.paidAmount);
+      const balance = Math.max(
+        0,
+        toNumber(sale.balanceAmount ?? total - received),
+      );
 
-    const amountInWords = (amount: number): string => {
-      if (amount === 0) return "Zero Rupees only";
+      const amountInWords = (amount: number): string => {
+        if (amount === 0) return "Zero Rupees only";
 
-      const ones = [
-        "",
-        "One",
-        "Two",
-        "Three",
-        "Four",
-        "Five",
-        "Six",
-        "Seven",
-        "Eight",
-        "Nine",
-        "Ten",
-        "Eleven",
-        "Twelve",
-        "Thirteen",
-        "Fourteen",
-        "Fifteen",
-        "Sixteen",
-        "Seventeen",
-        "Eighteen",
-        "Nineteen",
-      ];
-      const tens = [
-        "",
-        "",
-        "Twenty",
-        "Thirty",
-        "Forty",
-        "Fifty",
-        "Sixty",
-        "Seventy",
-        "Eighty",
-        "Ninety",
-      ];
+        const ones = [
+          "",
+          "One",
+          "Two",
+          "Three",
+          "Four",
+          "Five",
+          "Six",
+          "Seven",
+          "Eight",
+          "Nine",
+          "Ten",
+          "Eleven",
+          "Twelve",
+          "Thirteen",
+          "Fourteen",
+          "Fifteen",
+          "Sixteen",
+          "Seventeen",
+          "Eighteen",
+          "Nineteen",
+        ];
+        const tens = [
+          "",
+          "",
+          "Twenty",
+          "Thirty",
+          "Forty",
+          "Fifty",
+          "Sixty",
+          "Seventy",
+          "Eighty",
+          "Ninety",
+        ];
 
-      const underThousand = (n: number): string => {
-        let result = "";
-        if (n >= 100) {
-          result += `${ones[Math.floor(n / 100)]} Hundred `;
-          n %= 100;
+        const underThousand = (n: number): string => {
+          let result = "";
+          if (n >= 100) {
+            result += `${ones[Math.floor(n / 100)]} Hundred `;
+            n %= 100;
+          }
+          if (n >= 20) {
+            result += `${tens[Math.floor(n / 10)]} `;
+            n %= 10;
+          }
+          if (n > 0) result += `${ones[n]} `;
+          return result.trim();
+        };
+
+        let n = Math.floor(Math.abs(amount));
+        const parts: string[] = [];
+
+        const crore = Math.floor(n / 10000000);
+        if (crore) {
+          parts.push(`${underThousand(crore)} Crore`);
+          n %= 10000000;
         }
-        if (n >= 20) {
-          result += `${tens[Math.floor(n / 10)]} `;
-          n %= 10;
+
+        const lakh = Math.floor(n / 100000);
+        if (lakh) {
+          parts.push(`${underThousand(lakh)} Lakh`);
+          n %= 100000;
         }
-        if (n > 0) result += `${ones[n]} `;
-        return result.trim();
+
+        const thousand = Math.floor(n / 1000);
+        if (thousand) {
+          parts.push(`${underThousand(thousand)} Thousand`);
+          n %= 1000;
+        }
+
+        if (n) parts.push(underThousand(n));
+
+        return `${parts.join(" ")} Rupees only`;
       };
 
-      let n = Math.floor(Math.abs(amount));
-      const parts: string[] = [];
+      const paymentMode = esc(
+        String(sale.paymentMethod ?? invoice.paymentType ?? "Credit")
+          .replaceAll("_", " ")
+          .replaceAll("-", " "),
+      );
 
-      const crore = Math.floor(n / 10000000);
-      if (crore) {
-        parts.push(`${underThousand(crore)} Crore`);
-        n %= 10000000;
+      const printWindow = window.open("", "_blank", "width=1000,height=800");
+
+      if (!printWindow) {
+        alert("Please allow pop-ups in your browser to print the invoice.");
+        return;
       }
 
-      const lakh = Math.floor(n / 100000);
-      if (lakh) {
-        parts.push(`${underThousand(lakh)} Lakh`);
-        n %= 100000;
-      }
-
-      const thousand = Math.floor(n / 1000);
-      if (thousand) {
-        parts.push(`${underThousand(thousand)} Thousand`);
-        n %= 1000;
-      }
-
-      if (n) parts.push(underThousand(n));
-
-      return `${parts.join(" ")} Rupees only`;
-    };
-
-    const paymentMode = esc(
-      String(sale.paymentMethod ?? invoice.paymentType ?? "Credit")
-        .replaceAll("_", " ")
-        .replaceAll("-", " "),
-    );
-
-    const printWindow = window.open("", "_blank", "width=1000,height=800");
-
-    if (!printWindow) {
-      alert("Please allow pop-ups in your browser to print the invoice.");
-      return;
-    }
-
-    printWindow.document.open();
-    printWindow.document.write(`
+      printWindow.document.open();
+      printWindow.document.write(`
       <!DOCTYPE html>
       <html lang="en">
       <head>
@@ -899,21 +901,21 @@ const handleRowPrint = async (invoice: SaleInvoice) => {
       </body>
       </html>
     `);
-    printWindow.document.close();
+      printWindow.document.close();
 
-    printWindow.onload = () => {
-      printWindow.focus();
-      printWindow.print();
-    };
-  } catch (error) {
-    console.error("Invoice printing failed:", error);
-    alert(
-      error instanceof Error
-        ? `Unable to print invoice: ${error.message}`
-        : "Unable to print invoice. Please try again.",
-    );
-  }
-};
+      printWindow.onload = () => {
+        printWindow.focus();
+        printWindow.print();
+      };
+    } catch (error) {
+      console.error("Invoice printing failed:", error);
+      alert(
+        error instanceof Error
+          ? `Unable to print invoice: ${error.message}`
+          : "Unable to print invoice. Please try again.",
+      );
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
@@ -1223,18 +1225,137 @@ const handleRowPrint = async (invoice: SaleInvoice) => {
                           <Printer size={16} />
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            router.push(
-                              `/sales/${encodeURIComponent(invoice.id)}`,
-                            )
-                          }
-                          title="View Invoice"
-                          className="p-1.5 rounded hover:bg-gray-100 text-gray-600"
-                        >
-                          <MoreVertical size={16} />
-                        </button>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              const rect =
+                                event.currentTarget.getBoundingClientRect();
+                              const menuHeight = 200;
+                              const menuWidth = 192;
+                              const gap = 6;
+
+                              const top =
+                                rect.bottom + menuHeight + gap <=
+                                window.innerHeight
+                                  ? rect.bottom + gap
+                                  : Math.max(8, rect.top - menuHeight - gap);
+
+                              const right = Math.max(
+                                8,
+                                window.innerWidth - rect.right,
+                              );
+
+                              setMenuPosition({
+                                top,
+                                right: Math.min(
+                                  right,
+                                  window.innerWidth - menuWidth - 8,
+                                ),
+                              });
+
+                              setOpenMenuId((current) =>
+                                current === invoice.id ? null : invoice.id,
+                              );
+                            }}
+                            title="More invoice actions"
+                            aria-label={`More actions for invoice ${invoice.invoiceNo}`}
+                            className="rounded p-2 text-gray-700 hover:bg-gray-100"
+                          >
+                            <MoreVertical size={18} />
+                          </button>
+
+                          {openMenuId === invoice.id && menuPosition && (
+                            <div
+                              className="fixed z-[9999] w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-xl"
+                              style={{
+                                top: menuPosition.top,
+                                right: menuPosition.right,
+                              }}
+                              role="menu"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  setMenuPosition(null);
+                                  void handleRowPrint(invoice);
+                                }}
+                                className="block w-full px-4 py-2.5 text-left text-sm text-gray-800 hover:bg-gray-100"
+                              >
+                                View / Print Invoice
+                              </button>
+
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  setMenuPosition(null);
+                                  router.push(
+                                    `/sales/new?edit=${encodeURIComponent(invoice.id)}`,
+                                  );
+                                }}
+                                className="block w-full px-4 py-2.5 text-left text-sm text-gray-800 hover:bg-gray-100"
+                              >
+                                Edit Invoice
+                              </button>
+
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  setMenuPosition(null);
+                                  router.push(
+                                    `/sales/new?duplicate=${encodeURIComponent(invoice.id)}`,
+                                  );
+                                }}
+                                className="block w-full px-4 py-2.5 text-left text-sm text-gray-800 hover:bg-gray-100"
+                              >
+                                Duplicate Invoice
+                              </button>
+
+                              <div className="my-1 border-t border-gray-200" />
+
+                              <button
+                                type="button"
+                                role="menuitem"
+                                disabled={invoice.status === "Cancelled"}
+                                onClick={async () => {
+                                  setOpenMenuId(null);
+                                  setMenuPosition(null);
+
+                                  if (
+                                    !window.confirm(
+                                      `Cancel invoice ${invoice.invoiceNo}? This will restore its stock.`,
+                                    )
+                                  ) {
+                                    return;
+                                  }
+
+                                  try {
+                                    await api.cancelSale(invoice.id);
+                                    await loadInvoices(true);
+                                    window.alert(
+                                      "Invoice cancelled successfully.",
+                                    );
+                                  } catch (error) {
+                                    window.alert(
+                                      error instanceof ApiError
+                                        ? error.message
+                                        : "Unable to cancel this invoice.",
+                                    );
+                                  }
+                                }}
+                                className="block w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Cancel Invoice
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
