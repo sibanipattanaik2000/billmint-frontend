@@ -442,14 +442,15 @@ export const api = {
       method: "DELETE",
     }),
 
-  /* =======================================================
+   /* =======================================================
      SALES
   ======================================================= */
 
   sales: (params?: Record<string, QueryValue>) =>
     request<PaginatedResponse<any>>(`/sales${buildQuery(params)}`),
 
-  sale: (id: string) => request<ApiSuccess<any>>(`/sales/${id}`),
+  sale: (id: string) =>
+    request<ApiSuccess<any>>(`/sales/${encodeURIComponent(id)}`),
 
   createSale: (data: Record<string, any>) =>
     request<ApiSuccess<any>>("/sales", {
@@ -457,11 +458,23 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  cancelSale: (id: string) =>
-    request<any>(`/sales/${encodeURIComponent(id)}/cancel`, {
-      method: "POST",
+  updateSale: (id: string, data: Record<string, any>) =>
+    request<ApiSuccess<any>>(`/sales/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
     }),
 
+  cancelSale: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/sales/${encodeURIComponent(id)}/cancel`,
+      { method: "POST" },
+    ),
+
+  deleteSale: (id: string) =>
+    request<ApiSuccess<any>>(
+      `/sales/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
   /* =======================================================
      QUOTATIONS
   ======================================================= */

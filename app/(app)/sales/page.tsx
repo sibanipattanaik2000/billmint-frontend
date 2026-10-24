@@ -1,5 +1,5 @@
 "use client";
-
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -161,10 +161,16 @@ export default function SaleInvoicesPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{
-    top: number;
-    right: number;
-  } | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+
+  const [menuPosition, setMenuPosition] = useState({
+    top: 8,
+    left: 8,
+  });
+
+  const activeMenuInvoice = invoices.find(
+    (invoice) => invoice.id === openMenuId,
+  );
 
   const loadInvoices = useCallback(async (manualRefresh = false) => {
     if (manualRefresh) {
@@ -916,9 +922,101 @@ export default function SaleInvoicesPage() {
       );
     }
   };
+  const handleViewInvoice = (invoice: SaleInvoice) => {
+    setOpenMenuId(null);
+    router.push(`/sales/${encodeURIComponent(invoice.id)}`);
+  };
 
+  const handleEditInvoice = async (invoice: SaleInvoice) => {
+    setOpenMenuId(null);
+
+    try {
+      setActionLoadingId(invoice.id);
+
+      const response = await api.sale(invoice.id);
+      const sale = response?.data;
+
+      if (!sale) {
+        alert("Unable to load this invoice.");
+        return;
+      }
+
+      if (String(sale.status).toUpperCase() !== "DRAFT") {
+        alert(
+          "Only draft invoices can be edited. Cancelled or finalized invoices cannot be edited here.",
+        );
+        return;
+      }
+
+      router.push(`/sales/new?edit=${encodeURIComponent(invoice.id)}`);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to open the invoice for editing.",
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleCancelInvoice = async (invoice: SaleInvoice) => {
+    setOpenMenuId(null);
+
+    if (invoice.status === "Cancelled") {
+      alert("This invoice is already cancelled.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Cancel invoice ${invoice.invoiceNo}?\n\nThis operation may restore stock and serialized inventory. Continue only if this sale should be cancelled.`,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setActionLoadingId(invoice.id);
+      await api.cancelSale(invoice.id);
+      await loadInvoices(true);
+      alert(`Invoice ${invoice.invoiceNo} cancelled successfully.`);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to cancel this invoice.",
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleDeleteInvoice = async (invoice: SaleInvoice) => {
+    setOpenMenuId(null);
+
+    const confirmed = window.confirm(
+      `Delete invoice ${invoice.invoiceNo}?\n\nOnly invoices eligible for safe deletion should be removed. This action cannot be undone from this screen.`,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setActionLoadingId(invoice.id);
+      await api.deleteSale(invoice.id);
+      await loadInvoices(true);
+      alert(`Invoice ${invoice.invoiceNo} deleted successfully.`);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete this invoice.",
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
   return (
-    <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">
+      {" "}
       <input
         ref={fileInputRef}
         type="file"
@@ -926,7 +1024,6 @@ export default function SaleInvoicesPage() {
         onChange={handleExcelImport}
         className="hidden"
       />
-
       {/* Header — existing layout retained */}
       <div className="px-6 py-4 border-b flex items-center justify-between gap-4 print:hidden">
         <div className="flex items-center gap-2">
@@ -996,7 +1093,6 @@ export default function SaleInvoicesPage() {
           </button>
         </div>
       </div>
-
       {/* Filters */}
       <div className="px-6 py-3 bg-gray-50 border-b flex items-center gap-4 text-sm flex-wrap print:hidden">
         <div className="flex items-center gap-2">
@@ -1047,7 +1143,6 @@ export default function SaleInvoicesPage() {
           Clear filters
         </button>
       </div>
-
       {/* Summary */}
       <div className="px-6 py-4 flex gap-10 border-b flex-wrap">
         <div>
@@ -1069,7 +1164,6 @@ export default function SaleInvoicesPage() {
           </div>
         </div>
       </div>
-
       {/* Transactions */}
       <div className="flex-1 overflow-auto px-6 py-4">
         <div className="flex items-center justify-between gap-3 mb-3 print:hidden">
@@ -1124,7 +1218,8 @@ export default function SaleInvoicesPage() {
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        <div className="relative min-w-0 overflow-x-auto overflow-y-visible">
+          {" "}
           <table className="w-full text-sm min-w-[950px]">
             <thead>
               <tr className="border-b text-left text-gray-500">
@@ -1225,136 +1320,142 @@ export default function SaleInvoicesPage() {
                           <Printer size={16} />
                         </button>
 
-                        <div className="relative">
+                        <div>
                           <button
                             type="button"
+                            title="More actions"
+                            aria-label={`More actions for ${invoice.invoiceNo}`}
+                            aria-expanded={openMenuId === invoice.id}
+                            disabled={actionLoadingId === invoice.id}
                             onClick={(event) => {
+                              if (openMenuId === invoice.id) {
+                                setOpenMenuId(null);
+                                return;
+                              }
+
                               const rect =
                                 event.currentTarget.getBoundingClientRect();
-                              const menuHeight = 200;
-                              const menuWidth = 192;
-                              const gap = 6;
-
-                              const top =
-                                rect.bottom + menuHeight + gap <=
-                                window.innerHeight
-                                  ? rect.bottom + gap
-                                  : Math.max(8, rect.top - menuHeight - gap);
-
-                              const right = Math.max(
-                                8,
-                                window.innerWidth - rect.right,
-                              );
+                              const menuWidth = 208;
+                              const menuHeight = 220;
+                              const spaceBelow =
+                                window.innerHeight - rect.bottom;
+                              const showAbove = spaceBelow < menuHeight + 12;
 
                               setMenuPosition({
-                                top,
-                                right: Math.min(
-                                  right,
-                                  window.innerWidth - menuWidth - 8,
+                                top: Math.max(
+                                  8,
+                                  showAbove
+                                    ? rect.top - menuHeight - 4
+                                    : rect.bottom + 4,
+                                ),
+                                left: Math.max(
+                                  8,
+                                  Math.min(
+                                    rect.right - menuWidth,
+                                    window.innerWidth - menuWidth - 8,
+                                  ),
                                 ),
                               });
 
-                              setOpenMenuId((current) =>
-                                current === invoice.id ? null : invoice.id,
-                              );
+                              setOpenMenuId(invoice.id);
                             }}
-                            title="More invoice actions"
-                            aria-label={`More actions for invoice ${invoice.invoiceNo}`}
-                            className="rounded p-2 text-gray-700 hover:bg-gray-100"
+                            className="rounded p-1.5 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
                           >
-                            <MoreVertical size={18} />
+                            <MoreVertical size={16} />
                           </button>
 
-                          {openMenuId === invoice.id && menuPosition && (
-                            <div
-                              className="fixed z-[9999] w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-xl"
-                              style={{
-                                top: menuPosition.top,
-                                right: menuPosition.right,
-                              }}
-                              role="menu"
-                            >
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenuId(null);
-                                  setMenuPosition(null);
-                                  void handleRowPrint(invoice);
-                                }}
-                                className="block w-full px-4 py-2.5 text-left text-sm text-gray-800 hover:bg-gray-100"
-                              >
-                                View / Print Invoice
-                              </button>
+                          {openMenuId &&
+                            activeMenuInvoice &&
+                            typeof document !== "undefined" &&
+                            createPortal(
+                              <>
+                                <button
+                                  type="button"
+                                  aria-label="Close invoice actions"
+                                  className="fixed inset-0 z-[9998] cursor-default"
+                                  onClick={() => setOpenMenuId(null)}
+                                />
 
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenuId(null);
-                                  setMenuPosition(null);
-                                  router.push(
-                                    `/sales/new?edit=${encodeURIComponent(invoice.id)}`,
-                                  );
-                                }}
-                                className="block w-full px-4 py-2.5 text-left text-sm text-gray-800 hover:bg-gray-100"
-                              >
-                                Edit Invoice
-                              </button>
+                                <div
+                                  style={{
+                                    top: menuPosition.top,
+                                    left: menuPosition.left,
+                                  }}
+                                  className="fixed z-[9999] w-52 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-gray-800 shadow-xl"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      handleViewInvoice(activeMenuInvoice);
+                                    }}
+                                    className="block w-full whitespace-nowrap px-4 py-2.5 text-left text-sm hover:bg-gray-50"
+                                  >
+                                    View Invoice
+                                  </button>
 
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenuId(null);
-                                  setMenuPosition(null);
-                                  router.push(
-                                    `/sales/new?duplicate=${encodeURIComponent(invoice.id)}`,
-                                  );
-                                }}
-                                className="block w-full px-4 py-2.5 text-left text-sm text-gray-800 hover:bg-gray-100"
-                              >
-                                Duplicate Invoice
-                              </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      void handleRowPrint(activeMenuInvoice);
+                                    }}
+                                    className="block w-full whitespace-nowrap px-4 py-2.5 text-left text-sm hover:bg-gray-50"
+                                  >
+                                    Print Invoice
+                                  </button>
 
-                              <div className="my-1 border-t border-gray-200" />
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      actionLoadingId === activeMenuInvoice.id
+                                    }
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      void handleEditInvoice(activeMenuInvoice);
+                                    }}
+                                    className="block w-full whitespace-nowrap px-4 py-2.5 text-left text-sm hover:bg-gray-50 disabled:opacity-50"
+                                  >
+                                    Edit Invoice
+                                  </button>
 
-                              <button
-                                type="button"
-                                role="menuitem"
-                                disabled={invoice.status === "Cancelled"}
-                                onClick={async () => {
-                                  setOpenMenuId(null);
-                                  setMenuPosition(null);
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      actionLoadingId ===
+                                        activeMenuInvoice.id ||
+                                      activeMenuInvoice.status === "Cancelled"
+                                    }
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      void handleCancelInvoice(
+                                        activeMenuInvoice,
+                                      );
+                                    }}
+                                    className="block w-full whitespace-nowrap px-4 py-2.5 text-left text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                                  >
+                                    Cancel Invoice
+                                  </button>
 
-                                  if (
-                                    !window.confirm(
-                                      `Cancel invoice ${invoice.invoiceNo}? This will restore its stock.`,
-                                    )
-                                  ) {
-                                    return;
-                                  }
-
-                                  try {
-                                    await api.cancelSale(invoice.id);
-                                    await loadInvoices(true);
-                                    window.alert(
-                                      "Invoice cancelled successfully.",
-                                    );
-                                  } catch (error) {
-                                    window.alert(
-                                      error instanceof ApiError
-                                        ? error.message
-                                        : "Unable to cancel this invoice.",
-                                    );
-                                  }
-                                }}
-                                className="block w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                Cancel Invoice
-                              </button>
-                            </div>
-                          )}
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      actionLoadingId === activeMenuInvoice.id
+                                    }
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      void handleDeleteInvoice(
+                                        activeMenuInvoice,
+                                      );
+                                    }}
+                                    className="block w-full whitespace-nowrap px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                  >
+                                    Delete Invoice
+                                  </button>
+                                </div>
+                              </>,
+                              document.body,
+                            )}
                         </div>
                       </div>
                     </td>
@@ -1382,7 +1483,6 @@ export default function SaleInvoicesPage() {
           </p>
         )}
       </div>
-
       <div className="hidden print:block text-center text-xs text-gray-500 py-4">
         BillMint — Sale Invoices
       </div>
