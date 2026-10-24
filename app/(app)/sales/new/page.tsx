@@ -19,7 +19,9 @@ interface Customer {
 interface ItemLookupResult {
   id: string;
   name: string;
+  itemCode?: string | null;
   sku?: string | null;
+  deviceCode?: string | null;
   barcode?: string | null;
   imei?: string | null;
   purchasePrice?: number | string | null;
@@ -34,9 +36,9 @@ interface ItemLookupResult {
   trackSerial?: boolean;
   trackExpiry?: boolean;
   modelName?: string | null;
-  deviceCode?: string | null;
   inventoryUnit?: {
     id: string;
+    itemCode?: string | null;
     imei?: string | null;
     serialNumber?: string | null;
     status?: string;
@@ -399,11 +401,15 @@ export default function NewSalePage() {
         itemId: item.id,
         inventoryUnitId: item.inventoryUnit?.id ?? null,
 
-        itemCode: item.deviceCode || item.sku || code,
+        itemCode:
+          item.inventoryUnit?.itemCode ||
+          item.itemCode ||
+          item.deviceCode ||
+          item.sku ||
+          code,
         barcode: item.barcode || "",
         name: item.modelName || item.name || "",
         imei: item.inventoryUnit?.imei || item.imei || "",
-
         quantity: trackSerial ? 1 : Math.max(row.quantity || 1, 1),
 
         unit: item.unit?.shortName || item.unit?.name || "",

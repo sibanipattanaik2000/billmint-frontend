@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,27 +22,20 @@ interface Item {
   sku?: string | null;
   barcode?: string | null;
   imei?: string | null;
-
   description?: string | null;
-
   purchasePrice?: number | string | null;
   salePrice?: number | string | null;
   mrp?: number | string | null;
-
   openingStock?: number | string | null;
   currentStock?: number | string | null;
   minimumStock?: number | string | null;
-
   gstRate?: number | string | null;
   hsnSac?: string | null;
   discountPercent?: number | string | null;
-
   imageUrl?: string | null;
-
   trackBatch?: boolean;
   trackSerial?: boolean;
   trackExpiry?: boolean;
-
   status?: string;
   modelName?: string | null;
   deviceCode?: string | null;
@@ -55,35 +49,19 @@ interface Item {
   }[];
   createdAt?: string;
   updatedAt?: string;
-
-  category?: {
-    id?: string;
-    name?: string;
-  } | null;
-
-  brand?: {
-    id?: string;
-    name?: string;
-  } | null;
-
-  unit?: {
-    id?: string;
-    name?: string;
-    shortName?: string;
-  } | null;
-
-  supplier?: {
-    id?: string;
-    name?: string;
-  } | null;
-
+  category?: { id?: string; name?: string } | null;
+  brand?: { id?: string; name?: string } | null;
+  unit?: { id?: string; name?: string; shortName?: string } | null;
+  supplier?: { id?: string; name?: string } | null;
   stockMovements?: StockMovement[];
 }
+
 interface ItemModelGroup {
   modelName: string;
   totalStock: number;
   items: Item[];
 }
+
 interface StockMovement {
   id: string;
   date: string;
@@ -96,17 +74,6 @@ interface StockMovement {
   notes?: string | null;
 }
 
-interface ItemsResponse {
-  success: boolean;
-  data: Item[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-}
-
 function toNumber(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -116,10 +83,7 @@ function formatDate(value?: string | null): string {
   if (!value) return "—";
 
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "—";
-  }
+  if (Number.isNaN(date.getTime())) return "—";
 
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -130,7 +94,6 @@ function formatDate(value?: string | null): string {
 
 function formatMovementType(type: string): string {
   const normalized = type.replace(/[_-]+/g, " ").trim().toLowerCase();
-
   return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
@@ -138,15 +101,14 @@ function movementQuantity(movement: StockMovement): number {
   const quantityIn = toNumber(movement.quantityIn);
   const quantityOut = toNumber(movement.quantityOut);
 
-  if (quantityIn > 0) {
-    return quantityIn;
-  }
-
-  if (quantityOut > 0) {
-    return -quantityOut;
-  }
+  if (quantityIn > 0) return quantityIn;
+  if (quantityOut > 0) return -quantityOut;
 
   return 0;
+}
+
+function isAvailableUnit(status: string): boolean {
+  return status === "AVAILABLE" || status === "RETURNED";
 }
 
 export default function ItemsPage() {
@@ -157,23 +119,14 @@ export default function ItemsPage() {
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [modelGroups, setModelGroups] = useState<ItemModelGroup[]>([]);
   const [search, setSearch] = useState("");
-
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
-
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
-
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
   const [error, setError] = useState("");
-
-  /*
-   * Prevent an old search response from replacing
-   * a newer search result.
-   */
   const [requestVersion, setRequestVersion] = useState(0);
 
   const loadItems = useCallback(
@@ -204,10 +157,10 @@ export default function ItemsPage() {
               item.barcode,
               item.imei,
               item.brand?.name,
+              ...(item.inventoryUnits ?? []).map((unit) => unit.itemCode),
+              ...(item.inventoryUnits ?? []).map((unit) => unit.imei),
             ].some((value) =>
-              String(value ?? "")
-                .toLowerCase()
-                .includes(query),
+              String(value ?? "").toLowerCase().includes(query),
             ),
           );
         });
@@ -226,8 +179,8 @@ export default function ItemsPage() {
           safePage * limit,
         );
 
-        const allItems = groups.flatMap((group) => group.items);
         setItems(filteredGroups.flatMap((group) => group.items));
+
         setSelectedItem((current) => {
           if (!visibleGroups.length) return null;
 
@@ -242,9 +195,7 @@ export default function ItemsPage() {
           return visibleGroups[0].items[0] ?? null;
         });
 
-        if (safePage !== currentPage) {
-          setPage(safePage);
-        }
+        if (safePage !== currentPage) setPage(safePage);
       } catch (err) {
         setError(
           err instanceof ApiError ? err.message : "Unable to load items.",
@@ -258,6 +209,7 @@ export default function ItemsPage() {
     },
     [limit],
   );
+
   const handleDeleteItem = async () => {
     if (!selectedItem || deletingItem) return;
 
@@ -275,7 +227,6 @@ export default function ItemsPage() {
 
     try {
       await api.deleteItem(itemId);
-
       setSelectedItem(null);
       setRequestVersion((version) => version + 1);
     } catch (err) {
@@ -286,9 +237,7 @@ export default function ItemsPage() {
       setDeletingItem(false);
     }
   };
-  /*
-   * Initial load + page changes.
-   */
+
   useEffect(() => {
     let active = true;
 
@@ -297,9 +246,7 @@ export default function ItemsPage() {
     const timer = window.setTimeout(async () => {
       await loadItems(page, search);
 
-      if (active) {
-        setLoading(false);
-      }
+      if (active) setLoading(false);
     }, 250);
 
     return () => {
@@ -308,36 +255,22 @@ export default function ItemsPage() {
     };
   }, [page, requestVersion, loadItems, search]);
 
-  /*
-   * Load complete item details when the selected
-   * item changes.
-   */
   useEffect(() => {
-    if (!selectedItem?.id) {
-      return;
-    }
+    if (!selectedItem?.id) return;
 
     let active = true;
-
     setDetailLoading(true);
 
     api
       .item(selectedItem.id)
       .then((response) => {
-        if (!active) return;
-
-        setSelectedItem(response.data as Item);
+        if (active) setSelectedItem(response.data as Item);
       })
       .catch(() => {
-        /*
-         * The list data remains visible even when
-         * detail loading fails.
-         */
+        // Keep the list data visible if detail loading fails.
       })
       .finally(() => {
-        if (active) {
-          setDetailLoading(false);
-        }
+        if (active) setDetailLoading(false);
       });
 
     return () => {
@@ -345,9 +278,6 @@ export default function ItemsPage() {
     };
   }, [selectedItem?.id]);
 
-  /*
-   * Search should restart from page 1.
-   */
   useEffect(() => {
     setPage(1);
   }, [search]);
@@ -364,31 +294,22 @@ export default function ItemsPage() {
   };
 
   const stockValue = useMemo(() => {
-    if (!selectedItem) {
-      return 0;
-    }
+    if (!selectedItem) return 0;
 
     return (
-      toNumber(selectedItem.currentStock) * toNumber(selectedItem.purchasePrice)
+      toNumber(selectedItem.currentStock) *
+      toNumber(selectedItem.purchasePrice)
     );
   }, [selectedItem]);
 
   const stockStatus = useMemo(() => {
-    if (!selectedItem) {
-      return "unknown";
-    }
+    if (!selectedItem) return "unknown";
 
     const currentStock = toNumber(selectedItem.currentStock);
-
     const minimumStock = toNumber(selectedItem.minimumStock);
 
-    if (currentStock <= 0) {
-      return "out";
-    }
-
-    if (minimumStock > 0 && currentStock <= minimumStock) {
-      return "low";
-    }
+    if (currentStock <= 0) return "out";
+    if (minimumStock > 0 && currentStock <= minimumStock) return "low";
 
     return "available";
   }, [selectedItem]);
@@ -401,22 +322,64 @@ export default function ItemsPage() {
     const modelName =
       selectedItem.modelName?.trim() || selectedItem.name.trim();
 
-    return modelGroups.find((group) => group.modelName === modelName) ?? null;
+    return (
+      modelGroups.find((group) => group.modelName === modelName) ?? null
+    );
   }, [selectedItem, modelGroups]);
+
+  const physicalUnits = useMemo(
+    () =>
+      (selectedModelGroup?.items ?? []).flatMap((item) =>
+        (item.inventoryUnits ?? []).map((unit) => ({ item, unit })),
+      ),
+    [selectedModelGroup],
+  );
+
+  const trackedAvailableUnits = useMemo(
+    () =>
+      (selectedModelGroup?.items ?? []).reduce(
+        (count, item) =>
+          count +
+          (item.inventoryUnits?.filter((unit) =>
+            isAvailableUnit(unit.status),
+          ).length ?? 0),
+        0,
+      ),
+    [selectedModelGroup],
+  );
+
+  const filteredGroups = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return modelGroups.filter(
+      (group) =>
+        group.modelName.toLowerCase().includes(query) ||
+        group.items.some((item) =>
+          [
+            item.name,
+            item.modelName,
+            item.sku,
+            item.deviceCode,
+            item.barcode,
+            item.imei,
+            item.brand?.name,
+            ...(item.inventoryUnits ?? []).map((unit) => unit.itemCode),
+            ...(item.inventoryUnits ?? []).map((unit) => unit.imei),
+          ].some((value) =>
+            String(value ?? "").toLowerCase().includes(query),
+          ),
+        ),
+    );
+  }, [modelGroups, search]);
 
   return (
     <div className="flex-1 flex min-h-0 overflow-hidden bg-white">
-      {/* =====================================================
-          LEFT ITEM LIST
-      ===================================================== */}
-
+      {/* LEFT ITEM LIST */}
       <aside className="w-[330px] shrink-0 border-r border-slate-200 flex flex-col min-h-0">
-        {/* Header */}
         <div className="p-4 border-b border-slate-200">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h1 className="text-lg font-semibold text-slate-900">Items</h1>
-
               <p className="text-xs text-slate-500 mt-1">
                 {total} {total === 1 ? "item" : "items"}
               </p>
@@ -432,10 +395,8 @@ export default function ItemsPage() {
             </button>
           </div>
 
-          {/* Search */}
           <div className="relative mt-4">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
             <input
               type="search"
               value={search}
@@ -446,30 +407,24 @@ export default function ItemsPage() {
           </div>
         </div>
 
-        {/* Error */}
         {error && (
           <div className="mx-4 mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-3">
             <div className="flex gap-2">
               <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
-
               <div className="text-xs text-red-700">{error}</div>
             </div>
           </div>
         )}
 
-        {/* Column header */}
         <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           <span>Item</span>
           <span>Stock</span>
         </div>
 
-        {/* Item list */}
         <div className="flex-1 overflow-y-auto">
           {loading ? (
             <div className="space-y-2 p-3">
-              {Array.from({
-                length: 7,
-              }).map((_, index) => (
+              {Array.from({ length: 7 }).map((_, index) => (
                 <div
                   key={index}
                   className="h-14 animate-pulse rounded-md bg-slate-100"
@@ -480,11 +435,9 @@ export default function ItemsPage() {
             <div className="flex h-full items-center justify-center px-6 text-center">
               <div>
                 <Package className="mx-auto h-10 w-10 text-slate-300" />
-
                 <p className="mt-3 text-sm font-medium text-slate-700">
                   No items found
                 </p>
-
                 <p className="mt-1 text-xs text-slate-500">
                   {search.trim()
                     ? "Try another search."
@@ -504,29 +457,7 @@ export default function ItemsPage() {
               </div>
             </div>
           ) : (
-            modelGroups
-              .filter((group) => {
-                const query = search.trim().toLowerCase();
-
-                return (
-                  group.modelName.toLowerCase().includes(query) ||
-                  group.items.some((item) =>
-                    [
-                      item.name,
-                      item.modelName,
-                      item.sku,
-                      item.deviceCode,
-                      item.barcode,
-                      item.imei,
-                      item.brand?.name,
-                    ].some((value) =>
-                      String(value ?? "")
-                        .toLowerCase()
-                        .includes(query),
-                    ),
-                  )
-                );
-              })
+            filteredGroups
               .slice((page - 1) * limit, page * limit)
               .map((group) => {
                 const stock = toNumber(group.totalStock);
@@ -557,7 +488,6 @@ export default function ItemsPage() {
                         >
                           {group.modelName}
                         </div>
-
                         <div className="mt-1 truncate text-xs text-slate-500">
                           {group.items.length}{" "}
                           {group.items.length === 1
@@ -580,7 +510,6 @@ export default function ItemsPage() {
           )}
         </div>
 
-        {/* Pagination */}
         {!loading && totalPages > 1 && (
           <div className="border-t border-slate-200 px-3 py-3">
             <div className="flex items-center justify-between">
@@ -614,20 +543,15 @@ export default function ItemsPage() {
         )}
       </aside>
 
-      {/* =====================================================
-          RIGHT DETAIL PANEL
-      ===================================================== */}
-
+      {/* RIGHT DETAIL PANEL */}
       <main className="flex-1 min-w-0 min-h-0 overflow-y-auto">
         {!selectedItem ? (
           <div className="flex min-h-full items-center justify-center px-6">
             <div className="text-center">
               <Package className="mx-auto h-12 w-12 text-slate-300" />
-
               <h2 className="mt-4 text-base font-semibold text-slate-800">
                 No item selected
               </h2>
-
               <p className="mt-1 text-sm text-slate-500">
                 Select an item from the list.
               </p>
@@ -635,7 +559,6 @@ export default function ItemsPage() {
           </div>
         ) : (
           <div className="p-6">
-            {/* Header */}
             <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-3">
@@ -648,13 +571,11 @@ export default function ItemsPage() {
                       Out of stock
                     </span>
                   )}
-
                   {stockStatus === "low" && (
                     <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
                       Low stock
                     </span>
                   )}
-
                   {stockStatus === "available" && (
                     <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
                       In stock
@@ -669,14 +590,12 @@ export default function ItemsPage() {
                       {selectedItem.sku || "—"}
                     </strong>
                   </span>
-
                   <span>
                     Barcode:{" "}
                     <strong className="font-medium text-slate-700">
                       {selectedItem.barcode || "—"}
                     </strong>
                   </span>
-
                   {selectedItem.hsnSac && (
                     <span>
                       HSN/SAC:{" "}
@@ -715,6 +634,7 @@ export default function ItemsPage() {
                 >
                   Adjust Stock
                 </button>
+
                 <button
                   type="button"
                   onClick={handleDeleteItem}
@@ -727,20 +647,15 @@ export default function ItemsPage() {
               </div>
             </div>
 
-            {/* =================================================
-                SUMMARY CARDS
-            ================================================= */}
-
+            {/* SUMMARY CARDS */}
             <div className="grid grid-cols-1 gap-4 py-6 sm:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-lg border border-slate-200 bg-white p-4">
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Sale Price
                 </div>
-
                 <div className="mt-2 text-lg font-semibold text-slate-900">
                   {formatINR(toNumber(selectedItem.salePrice))}
                 </div>
-
                 <div className="mt-1 text-xs text-slate-500">Selling price</div>
               </div>
 
@@ -748,11 +663,9 @@ export default function ItemsPage() {
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Purchase Price
                 </div>
-
                 <div className="mt-2 text-lg font-semibold text-slate-900">
                   {formatINR(toNumber(selectedItem.purchasePrice))}
                 </div>
-
                 <div className="mt-1 text-xs text-slate-500">Cost price</div>
               </div>
 
@@ -760,14 +673,12 @@ export default function ItemsPage() {
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Current Stock
                 </div>
-
                 <div className="mt-2 text-lg font-semibold text-slate-900">
                   {toNumber(selectedItem.currentStock)}
                   {selectedItem.unit?.shortName
                     ? ` ${selectedItem.unit.shortName}`
                     : ""}
                 </div>
-
                 <div className="mt-1 text-xs text-slate-500">
                   Minimum: {toNumber(selectedItem.minimumStock)}
                 </div>
@@ -777,11 +688,9 @@ export default function ItemsPage() {
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Stock Value
                 </div>
-
                 <div className="mt-2 text-lg font-semibold text-slate-900">
                   {formatINR(stockValue)}
                 </div>
-
                 <div className="mt-1 text-xs text-slate-500">
                   Current stock × purchase price
                 </div>
@@ -796,27 +705,17 @@ export default function ItemsPage() {
                     Physical Stock Units
                   </h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    Available units recorded against this model.
+                    Available and sold units recorded against this model.
                   </p>
                 </div>
 
                 <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                  {selectedModelGroup?.items.reduce(
-                    (total, item) =>
-                      total +
-                      (item.inventoryUnits?.filter(
-                        (unit) =>
-                          unit.status === "AVAILABLE" ||
-                          unit.status === "RETURNED",
-                      ).length ?? 0),
-                    0,
-                  ) ?? 0}{" "}
-                  tracked units
+                  {trackedAvailableUnits} available units
                 </span>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[700px] text-sm">
+                <table className="w-full min-w-[600px] text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-left">
                       <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -826,29 +725,18 @@ export default function ItemsPage() {
                         IMEI
                       </th>
                       <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Serial Number
-                      </th>
-                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Status
                       </th>
-                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Qty
                       </th>
                     </tr>
                   </thead>
 
                   <tbody>
-                    {(selectedModelGroup?.items ?? []).flatMap((item) =>
-                      (item.inventoryUnits ?? [])
-                        .filter(
-                          (unit) =>
-                            unit.status === "AVAILABLE" ||
-                            unit.status === "RETURNED",
-                        )
-                        .map((unit) => ({ item, unit })),
-                    ).length === 0 ? (
+                    {physicalUnits.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-4 py-10 text-center">
+                        <td colSpan={4} className="px-4 py-10 text-center">
                           <Package className="mx-auto h-8 w-8 text-slate-300" />
                           <p className="mt-2 text-sm font-medium text-slate-700">
                             No tracked units recorded
@@ -860,20 +748,15 @@ export default function ItemsPage() {
                         </td>
                       </tr>
                     ) : (
-                      (selectedModelGroup?.items ?? [])
-                        .flatMap((item) =>
-                          (item.inventoryUnits ?? [])
-                            .filter(
-                              (unit) =>
-                                unit.status === "AVAILABLE" ||
-                                unit.status === "RETURNED",
-                            )
-                            .map((unit) => ({ item, unit })),
-                        )
-                        .map(({ item, unit }) => (
+                      physicalUnits.map(({ item, unit }) => {
+                        const isSold = unit.status === "SOLD";
+
+                        return (
                           <tr
                             key={unit.id}
-                            className="border-b border-slate-100 last:border-b-0"
+                            className={`border-b border-slate-100 last:border-b-0 ${
+                              isSold ? "bg-red-50/40" : ""
+                            }`}
                           >
                             <td className="px-4 py-3 font-medium text-slate-800">
                               {unit.itemCode ||
@@ -881,32 +764,46 @@ export default function ItemsPage() {
                                 item.sku ||
                                 "—"}
                             </td>
+
                             <td className="px-4 py-3 font-mono text-xs text-slate-700">
                               {unit.imei || "—"}
                             </td>
-                            <td className="px-4 py-3 font-mono text-xs text-slate-700">
-                              {unit.serialNumber || "—"}
-                            </td>
+
                             <td className="px-4 py-3">
-                              <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
-                                {unit.status}
-                              </span>
+                              {isSold ? (
+                                <span className="inline-flex rounded-full bg-red-100 px-2 py-1 text-xs font-semibold text-red-700">
+                                  SOLD OUT
+                                </span>
+                              ) : (
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${
+                                    isAvailableUnit(unit.status)
+                                      ? "bg-emerald-50 text-emerald-700"
+                                      : "bg-slate-100 text-slate-600"
+                                  }`}
+                                >
+                                  {unit.status}
+                                </span>
+                              )}
                             </td>
-                            <td className="px-4 py-3 text-right font-medium text-slate-800">
-                              1
+
+                            <td
+                              className={`px-4 py-3 text-right font-medium ${
+                                isSold ? "text-red-600" : "text-slate-800"
+                              }`}
+                            >
+                              {isSold ? 0 : isAvailableUnit(unit.status) ? 1 : 0}
                             </td>
                           </tr>
-                        ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
             </section>
 
-            {/* =================================================
-                DETAILS
-            ================================================= */}
-
+            {/* DETAILS */}
             <section className="rounded-lg border border-slate-200">
               <div className="border-b border-slate-200 px-5 py-4">
                 <h3 className="text-sm font-semibold text-slate-900">
@@ -1028,7 +925,6 @@ export default function ItemsPage() {
 
                 <div className="sm:col-span-2 xl:col-span-1">
                   <div className="text-xs text-slate-500">Status</div>
-
                   <div className="mt-1">
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -1046,7 +942,6 @@ export default function ItemsPage() {
               {selectedItem.description && (
                 <div className="border-t border-slate-200 px-5 py-4">
                   <div className="text-xs text-slate-500">Description</div>
-
                   <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
                     {selectedItem.description}
                   </p>
@@ -1054,17 +949,13 @@ export default function ItemsPage() {
               )}
             </section>
 
-            {/* =================================================
-                STOCK MOVEMENTS
-            ================================================= */}
-
+            {/* STOCK MOVEMENTS */}
             <section className="mt-6">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">
                     Stock Transactions
                   </h3>
-
                   <p className="mt-1 text-xs text-slate-500">
                     Inventory movement recorded by the backend.
                   </p>
@@ -1083,23 +974,18 @@ export default function ItemsPage() {
                         <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Type
                         </th>
-
                         <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Reference
                         </th>
-
                         <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Date
                         </th>
-
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Quantity
                         </th>
-
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Balance
                         </th>
-
                         <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Notes
                         </th>
@@ -1111,11 +997,9 @@ export default function ItemsPage() {
                         <tr>
                           <td colSpan={6} className="px-4 py-12 text-center">
                             <Package className="mx-auto h-8 w-8 text-slate-300" />
-
                             <div className="mt-3 text-sm font-medium text-slate-700">
                               No stock transactions
                             </div>
-
                             <div className="mt-1 text-xs text-slate-500">
                               Transactions will appear here as stock changes.
                             </div>
@@ -1124,7 +1008,6 @@ export default function ItemsPage() {
                       ) : (
                         movements.map((movement) => {
                           const quantity = movementQuantity(movement);
-
                           const isIn = quantity > 0;
 
                           return (
@@ -1149,7 +1032,6 @@ export default function ItemsPage() {
                                           )
                                         : "Reference"}
                                     </div>
-
                                     {movement.referenceId && (
                                       <div className="mt-0.5 font-mono text-[11px] text-slate-400">
                                         {movement.referenceId}
@@ -1175,7 +1057,7 @@ export default function ItemsPage() {
                                         : "text-slate-700"
                                   }
                                 >
-                                  {isIn ? "+" : quantity < 0 ? "" : ""}
+                                  {isIn ? "+" : ""}
                                   {quantity}
                                 </span>
                               </td>
@@ -1197,15 +1079,11 @@ export default function ItemsPage() {
               </div>
             </section>
 
-            {/* =================================================
-                FOOTER INFO
-            ================================================= */}
-
+            {/* FOOTER INFO */}
             <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-400">
               {selectedItem.createdAt && (
                 <span>Created: {formatDate(selectedItem.createdAt)}</span>
               )}
-
               {selectedItem.updatedAt && (
                 <span>Last updated: {formatDate(selectedItem.updatedAt)}</span>
               )}
