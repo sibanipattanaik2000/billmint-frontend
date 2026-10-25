@@ -162,7 +162,8 @@ export default function SaleInvoicesPage() {
   const [error, setError] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
-
+  const [deleteConfirmInvoice, setDeleteConfirmInvoice] =
+    useState<SaleInvoice | null>(null);
   const [menuPosition, setMenuPosition] = useState({
     top: 8,
     left: 8,
@@ -940,14 +941,6 @@ export default function SaleInvoicesPage() {
         alert("Unable to load this invoice.");
         return;
       }
-
-      if (String(sale.status).toUpperCase() !== "DRAFT") {
-        alert(
-          "Only draft invoices can be edited. Cancelled or finalized invoices cannot be edited here.",
-        );
-        return;
-      }
-
       router.push(`/sales/new?edit=${encodeURIComponent(invoice.id)}`);
     } catch (error) {
       alert(
@@ -990,20 +983,28 @@ export default function SaleInvoicesPage() {
     }
   };
 
-  const handleDeleteInvoice = async (invoice: SaleInvoice) => {
+  const handleDeleteInvoice = (invoice: SaleInvoice) => {
     setOpenMenuId(null);
+    setDeleteConfirmInvoice(invoice);
+  };
 
-    const confirmed = window.confirm(
-      `Delete invoice ${invoice.invoiceNo}?\n\nOnly invoices eligible for safe deletion should be removed. This action cannot be undone from this screen.`,
-    );
+  const confirmDeleteInvoice = async () => {
+    const invoice = deleteConfirmInvoice;
 
-    if (!confirmed) return;
+    if (!invoice) return;
 
     try {
       setActionLoadingId(invoice.id);
+
+      // The backend permanently deletes the invoice and its line rows.
       await api.deleteSale(invoice.id);
-      await loadInvoices(true);
-      alert(`Invoice ${invoice.invoiceNo} deleted successfully.`);
+
+      // Remove it immediately from the visible Sales list.
+      setInvoices((current) =>
+        current.filter((entry) => entry.id !== invoice.id),
+      );
+
+      setDeleteConfirmInvoice(null);
     } catch (error) {
       alert(
         error instanceof Error
@@ -1486,6 +1487,62 @@ export default function SaleInvoicesPage() {
       <div className="hidden print:block text-center text-xs text-gray-500 py-4">
         BillMint — Sale Invoices
       </div>
+      {deleteConfirmInvoice && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 p-4"
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-invoice-title"
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"
+          >
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600">
+                <span className="text-xl font-bold">!</span>
+              </div>
+
+              <div>
+                <h2
+                  id="delete-invoice-title"
+                  className="text-lg font-semibold text-gray-900"
+                >
+                  Delete invoice permanently?
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-gray-600">
+                  Are you sure you want to delete invoice{" "}
+                  <strong>{deleteConfirmInvoice.invoiceNo}</strong>? This action
+                  cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-gray-100 pt-4">
+              <button
+                type="button"
+                disabled={actionLoadingId === deleteConfirmInvoice.id}
+                onClick={() => setDeleteConfirmInvoice(null)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={actionLoadingId === deleteConfirmInvoice.id}
+                onClick={() => void confirmDeleteInvoice()}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {actionLoadingId === deleteConfirmInvoice.id
+                  ? "Deleting..."
+                  : "OK, Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

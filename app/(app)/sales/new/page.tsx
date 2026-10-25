@@ -247,12 +247,6 @@ export default function NewSalePage() {
           throw new Error("Invoice not found.");
         }
 
-        if (String(sale.status).toUpperCase() !== "DRAFT") {
-          throw new Error(
-            "Only draft invoices can currently be edited. Cancelled or finalized invoices must not be overwritten because that could corrupt stock and payment records.",
-          );
-        }
-
         if (!active) return;
 
         setOriginalInvoiceNumber(sale.invoiceNumber || "");
@@ -775,140 +769,140 @@ export default function NewSalePage() {
      SAVE SALE
   ========================================================= */
 
-async function handleSave() {
-  setPageError("");
+  async function handleSave() {
+    setPageError("");
 
-  const validRows = items.filter((row) => row.itemId);
+    const validRows = items.filter((row) => row.itemId);
 
-  if (validRows.length === 0) {
-    setPageError("Add at least one valid item using the Item Code.");
-    return;
-  }
-
-  for (const row of validRows) {
-    if (row.quantity <= 0) {
-      setPageError(`Quantity must be greater than zero for "${row.name}".`);
+    if (validRows.length === 0) {
+      setPageError("Add at least one valid item using the Item Code.");
       return;
     }
 
-    if (row.inventoryUnitId && row.quantity !== 1) {
-      setPageError(
-        `The selected IMEI device "${row.name}" must have quantity 1.`,
-      );
+    for (const row of validRows) {
+      if (row.quantity <= 0) {
+        setPageError(`Quantity must be greater than zero for "${row.name}".`);
+        return;
+      }
+
+      if (row.inventoryUnitId && row.quantity !== 1) {
+        setPageError(
+          `The selected IMEI device "${row.name}" must have quantity 1.`,
+        );
+        return;
+      }
+
+      if (row.trackSerial && row.quantity !== 1) {
+        setPageError(
+          `"${row.name}" is serial/IMEI tracked and must have quantity 1.`,
+        );
+        return;
+      }
+
+      if (row.currentStock >= 0 && row.quantity > row.currentStock) {
+        setPageError(
+          `Insufficient stock for "${row.name}". Available stock: ${row.currentStock}.`,
+        );
+        return;
+      }
+
+      if (row.rate < 0) {
+        setPageError(`Invalid selling rate for "${row.name}".`);
+        return;
+      }
+
+      if (row.discountPercent < 0 || row.discountPercent > 100) {
+        setPageError(`Invalid discount for "${row.name}".`);
+        return;
+      }
+
+      if (row.gstRate < 0 || row.gstRate > 100) {
+        setPageError(`Invalid GST rate for "${row.name}".`);
+        return;
+      }
+    }
+
+    const enteredPaidAmount = numberValue(paidAmount);
+
+    if (enteredPaidAmount < 0) {
+      setPageError("Received amount cannot be negative.");
       return;
     }
 
-    if (row.trackSerial && row.quantity !== 1) {
-      setPageError(
-        `"${row.name}" is serial/IMEI tracked and must have quantity 1.`,
-      );
+    if (enteredPaidAmount > totals.grandTotal) {
+      setPageError("Received amount cannot be greater than the invoice total.");
       return;
     }
 
-    if (row.currentStock >= 0 && row.quantity > row.currentStock) {
-      setPageError(
-        `Insufficient stock for "${row.name}". Available stock: ${row.currentStock}.`,
-      );
+    if (enteredPaidAmount > 0 && !paymentMethod) {
+      setPageError("Select a payment method for the received amount.");
       return;
     }
 
-    if (row.rate < 0) {
-      setPageError(`Invalid selling rate for "${row.name}".`);
+    const saleDate = new Date(`${invoiceDate}T12:00:00`);
+
+    if (Number.isNaN(saleDate.getTime())) {
+      setPageError("Please select a valid invoice date.");
       return;
     }
 
-    if (row.discountPercent < 0 || row.discountPercent > 100) {
-      setPageError(`Invalid discount for "${row.name}".`);
-      return;
-    }
+    setLoading(true);
 
-    if (row.gstRate < 0 || row.gstRate > 100) {
-      setPageError(`Invalid GST rate for "${row.name}".`);
-      return;
-    }
-  }
+    try {
+      const payload = {
+        customerId,
+        date: saleDate.toISOString(),
 
-  const enteredPaidAmount = numberValue(paidAmount);
+        items: validRows.map((row) => ({
+          itemId: row.itemId,
+          itemName: row.name,
+          hsnSac: row.hsnSac || undefined,
+          quantity: row.quantity,
+          unit: row.unit || undefined,
+          rate: row.rate,
+          discountPercent: row.discountPercent,
+          gstRate: row.gstRate,
+          inventoryUnitIds: row.inventoryUnitId
+            ? [row.inventoryUnitId]
+            : undefined,
+        })),
 
-  if (enteredPaidAmount < 0) {
-    setPageError("Received amount cannot be negative.");
-    return;
-  }
+        paymentMethod: enteredPaidAmount > 0 ? paymentMethod : undefined,
+        paidAmount: enteredPaidAmount,
+        terms: terms.trim() || undefined,
 
-  if (enteredPaidAmount > totals.grandTotal) {
-    setPageError("Received amount cannot be greater than the invoice total.");
-    return;
-  }
-
-  if (enteredPaidAmount > 0 && !paymentMethod) {
-    setPageError("Select a payment method for the received amount.");
-    return;
-  }
-
-  const saleDate = new Date(`${invoiceDate}T12:00:00`);
-
-  if (Number.isNaN(saleDate.getTime())) {
-    setPageError("Please select a valid invoice date.");
-    return;
-  }
-
-  setLoading(true);
-
-  try {
-    const payload = {
-      customerId,
-      date: saleDate.toISOString(),
-
-      items: validRows.map((row) => ({
-        itemId: row.itemId,
-        itemName: row.name,
-        hsnSac: row.hsnSac || undefined,
-        quantity: row.quantity,
-        unit: row.unit || undefined,
-        rate: row.rate,
-        discountPercent: row.discountPercent,
-        gstRate: row.gstRate,
-        inventoryUnitIds: row.inventoryUnitId
-          ? [row.inventoryUnitId]
+        notes: referenceNo.trim()
+          ? `Payment Reference: ${referenceNo.trim()}`
           : undefined,
-      })),
+      };
 
-      paymentMethod: enteredPaidAmount > 0 ? paymentMethod : undefined,
-      paidAmount: enteredPaidAmount,
-      terms: terms.trim() || undefined,
+      const response = isEditMode
+        ? await api.updateSale(editSaleId!, payload)
+        : await api.createSale(payload);
 
-      notes: referenceNo.trim()
-        ? `Payment Reference: ${referenceNo.trim()}`
-        : undefined,
-    };
+      const savedSale = response?.data;
 
-    const response = isEditMode
-      ? await api.updateSale(editSaleId!, payload)
-      : await api.createSale(payload);
-
-    const savedSale = response?.data;
-
-    router.push(
-      savedSale?.id
-        ? `/sales?${isEditMode ? "updated" : "created"}=${encodeURIComponent(
-            savedSale.invoiceNumber || savedSale.id,
-          )}`
-        : "/sales",
-    );
-  } catch (error) {
-    if (error instanceof ApiError) {
-      setPageError(error.message);
-    } else {
-      setPageError(
-        isEditMode
-          ? "Unable to update the invoice. Please try again."
-          : "Unable to create the sale. Please try again.",
+      router.push(
+        savedSale?.id
+          ? `/sales?${isEditMode ? "updated" : "created"}=${encodeURIComponent(
+              savedSale.invoiceNumber || savedSale.id,
+            )}`
+          : "/sales",
       );
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setPageError(error.message);
+      } else {
+        setPageError(
+          isEditMode
+            ? "Unable to update the invoice. Please try again."
+            : "Unable to create the sale. Please try again.",
+        );
+      }
+    } finally {
+      setLoading(false);
     }
-  } finally {
-    setLoading(false);
   }
-}
 
   /* =========================================================
      RENDER
@@ -923,10 +917,13 @@ async function handleSave() {
       <div className="border-b border-slate-200 px-6 py-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">New Sale</h1>
-
+            <h1 className="text-lg font-semibold text-slate-900">
+              {isEditMode ? "Edit Invoice" : "New Sale"}
+            </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Add items by Item Code and create the invoice.
+              {isEditMode
+                ? "Update the existing invoice. Saving will not create a duplicate."
+                : "Add items by Item Code and create the invoice."}
             </p>
           </div>
 
@@ -935,7 +932,9 @@ async function handleSave() {
               <div className="text-xs text-slate-500">Invoice Number</div>
 
               <div className="text-sm font-medium text-slate-800">
-                Auto generated
+                {isEditMode
+                  ? originalInvoiceNumber || "Loading invoice..."
+                  : "Auto generated"}
               </div>
             </div>
 
@@ -1521,10 +1520,18 @@ async function handleSave() {
           <button
             type="button"
             onClick={handleSave}
-            disabled={loading}
+            disabled={loading || loadingExistingSale}
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? "Saving..." : "Save Sale"}
+            {loadingExistingSale
+              ? "Loading invoice..."
+              : loading
+                ? isEditMode
+                  ? "Updating..."
+                  : "Saving..."
+                : isEditMode
+                  ? "Update Invoice"
+                  : "Save Sale"}
           </button>
         </div>
       </div>
