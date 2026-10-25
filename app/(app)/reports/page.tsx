@@ -262,10 +262,13 @@ function getReportColumns(key: ReportKey): string[] {
     case "payment-collection":
       return [
         "date",
-        "customerName",
+        "source",
+        "partyOrCategory",
         "invoiceNumbers",
         "method",
+        "bankAccountName",
         "reference",
+        "description",
         "amount",
       ];
   }
@@ -368,6 +371,9 @@ function columnLabel(field: string): string {
     invoiceNumbers: "Invoice No.",
     method: "Payment Type",
     reference: "Reference",
+    source: "Collection Source",
+    partyOrCategory: "Customer / Category",
+    bankAccountName: "Cash / Bank Account",
   };
 
   return (
@@ -582,8 +588,9 @@ export default function ReportsPage() {
           ["Cash", summary.cash, true],
           ["UPI", summary.upi, true],
           ["Card", summary.card, true],
+          ["Bank Transfer", summary.bank, true],
           ["Other", summary.other, true],
-          ["Payments Received", summary.paymentCount],
+          ["Transactions", summary.paymentCount],
         ];
       default:
         return [];
