@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -14,7 +13,8 @@ type ReportKey =
   | "low-stock"
   | "receivable"
   | "payable"
-  | "expense";
+  | "expense"
+  | "payment-collection";
 
 type ReportDefinition = {
   key: ReportKey;
@@ -98,6 +98,14 @@ const reportDefinitions: ReportDefinition[] = [
     icon: "📉",
     dates: true,
   },
+  {
+    key: "payment-collection",
+    title: "Daily Payment Collection",
+    description: "Money received by Cash, UPI, Card and other payment methods.",
+    category: "Sales",
+    icon: "💳",
+    dates: true,
+  },
 ];
 
 const categories = [
@@ -149,9 +157,7 @@ function dateString(date: Date) {
 }
 
 function getErrorMessage(error: unknown) {
-  return error instanceof Error
-    ? error.message
-    : "Unable to load this report.";
+  return error instanceof Error ? error.message : "Unable to load this report.";
 }
 
 function getReportRows(key: ReportKey, result: any): ReportRow[] {
@@ -174,6 +180,8 @@ function getReportRows(key: ReportKey, result: any): ReportRow[] {
     case "payable":
       return Array.isArray(result.data) ? result.data : [];
     case "expense":
+      return Array.isArray(result.data) ? result.data : [];
+    case "payment-collection":
       return Array.isArray(result.data) ? result.data : [];
     default:
       return [];
@@ -250,11 +258,14 @@ function getReportColumns(key: ReportKey): string[] {
         "balanceAmount",
       ];
     case "expense":
+      return ["date", "category", "description", "paymentMethod", "amount"];
+    case "payment-collection":
       return [
         "date",
-        "category",
-        "description",
-        "paymentMethod",
+        "customerName",
+        "invoiceNumbers",
+        "method",
+        "reference",
         "amount",
       ];
   }
@@ -354,19 +365,22 @@ function columnLabel(field: string): string {
     sgstAmount: "SGST",
     igstAmount: "IGST",
     cessAmount: "Cess",
+    invoiceNumbers: "Invoice No.",
+    method: "Payment Type",
+    reference: "Reference",
   };
 
-  return labels[field] ??
-    field.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+  return (
+    labels[field] ??
+    field.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase())
+  );
 }
 
 function downloadCsv(title: string, rows: ReportRow[], columns: string[]) {
   if (!rows.length) return;
 
   const escapeCsv = (value: unknown) => {
-    const text = value === null || value === undefined
-      ? ""
-      : String(value);
+    const text = value === null || value === undefined ? "" : String(value);
 
     return `"${text.replace(/"/g, '""')}"`;
   };
@@ -479,8 +493,15 @@ export default function ReportsPage() {
         case "expense":
           response = await api.reportExpense(params);
           break;
+        case "payment-collection":
+          response = await api.reportPaymentCollection(params);
+          break;
       }
-
+      if (!response || !response.data) {
+        throw new Error(
+          "The payment collection report returned no data. Check the backend API and server logs.",
+        );
+      }
       setResult(response.data);
     } catch (loadError) {
       setError(getErrorMessage(loadError));
@@ -492,19 +513,27 @@ export default function ReportsPage() {
   useEffect(() => {
     void loadReport();
   }, [loadReport]);
-
+  useEffect(() => {
+    if (selectedKey === "payment-collection") {
+      const today = dateString(new Date());
+      setFrom(today);
+      setTo(today);
+    }
+  }, [selectedKey]);
   const rows = useMemo(
     () => getReportRows(selectedKey, result),
     [selectedKey, result],
   );
 
   const columns = useMemo(
-    () => getReportColumns(selectedKey).filter((field) => !hiddenFields.has(field)),
+    () =>
+      getReportColumns(selectedKey).filter((field) => !hiddenFields.has(field)),
     [selectedKey],
   );
 
   const summary = result?.summary ?? {};
-  const showSummary = selectedKey !== "party-wise-sales" &&
+  const showSummary =
+    selectedKey !== "party-wise-sales" &&
     selectedKey !== "item-wise-sales" &&
     selectedKey !== "low-stock";
 
@@ -546,6 +575,15 @@ export default function ReportsPage() {
         return [
           ["Expense Records", summary.expenseCount],
           ["Total Expenses", summary.totalAmount, true],
+        ];
+      case "payment-collection":
+        return [
+          ["Total Collected", summary.total, true],
+          ["Cash", summary.cash, true],
+          ["UPI", summary.upi, true],
+          ["Card", summary.card, true],
+          ["Other", summary.other, true],
+          ["Payments Received", summary.paymentCount],
         ];
       default:
         return [];
@@ -670,11 +708,10 @@ export default function ReportsPage() {
 
         <section>
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="font-semibold text-slate-900">
-              Available reports
-            </h2>
+            <h2 className="font-semibold text-slate-900">Available reports</h2>
             <span className="text-xs text-slate-500">
-              {filteredReports.length} report{filteredReports.length === 1 ? "" : "s"}
+              {filteredReports.length} report
+              {filteredReports.length === 1 ? "" : "s"}
             </span>
           </div>
 
@@ -735,7 +772,8 @@ export default function ReportsPage() {
               </div>
               <p className="mt-1 text-sm text-slate-500">
                 {selectedReport.description}
-                {selectedReport.dates && ` • ${from || "All dates"} to ${to || "Today"}`}
+                {selectedReport.dates &&
+                  ` • ${from || "All dates"} to ${to || "Today"}`}
               </p>
             </div>
 
@@ -750,20 +788,24 @@ export default function ReportsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => router.push(
-                  selectedKey === "sale-summary" ||
-                  selectedKey === "party-wise-sales" ||
-                  selectedKey === "item-wise-sales"
-                    ? "/sales"
-                    : selectedKey === "purchase-summary"
-                      ? "/purchases"
-                      : selectedKey === "stock-summary" ||
-                          selectedKey === "low-stock"
-                        ? "/items"
-                        : selectedKey === "expense"
-                          ? "/expenses"
-                          : "/cash-bank",
-                )}
+                onClick={() =>
+                  router.push(
+                    selectedKey === "payment-collection"
+                      ? "/payments"
+                      : selectedKey === "sale-summary" ||
+                          selectedKey === "party-wise-sales" ||
+                          selectedKey === "item-wise-sales"
+                        ? "/sales"
+                        : selectedKey === "purchase-summary"
+                          ? "/purchases"
+                          : selectedKey === "stock-summary" ||
+                              selectedKey === "low-stock"
+                            ? "/items"
+                            : selectedKey === "expense"
+                              ? "/expenses"
+                              : "/cash-bank",
+                  )
+                }
                 className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
               >
                 Open module →
@@ -789,81 +831,91 @@ export default function ReportsPage() {
             <div className="p-14 text-center text-sm text-slate-500">
               Loading real report data…
             </div>
-          ) : !error && result && (
-            <>
-              {showSummary && summaryCards.length > 0 && (
-                <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {summaryCards.map(([label, value, isMoney]) => (
-                    <div
-                      key={String(label)}
-                      className="rounded-xl bg-slate-50 p-4"
-                    >
-                      <p className="text-xs font-medium text-slate-500">
-                        {label}
-                      </p>
-                      <p className="mt-2 break-words text-xl font-bold text-slate-900">
-                        {value === null || value === undefined
-                          ? "—"
-                          : isMoney
-                            ? formatINR(value as number | string)
-                            : Number(value).toLocaleString("en-IN")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
+          ) : (
+            !error &&
+            result && (
+              <>
+                {showSummary && summaryCards.length > 0 && (
+                  <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {summaryCards.map(([label, value, isMoney]) => (
+                      <div
+                        key={String(label)}
+                        className="rounded-xl bg-slate-50 p-4"
+                      >
+                        <p className="text-xs font-medium text-slate-500">
+                          {label}
+                        </p>
+                        <p className="mt-2 break-words text-xl font-bold text-slate-900">
+                          {value === null || value === undefined
+                            ? "—"
+                            : isMoney
+                              ? formatINR(value as number | string)
+                              : Number(value).toLocaleString("en-IN")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] text-left text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                    <tr>
-                      {columns.map((field) => (
-                        <th
-                          key={field}
-                          className="whitespace-nowrap px-4 py-3 font-semibold"
-                        >
-                          {columnLabel(field)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {rows.length === 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px] text-left text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                       <tr>
-                        <td
-                          colSpan={Math.max(columns.length, 1)}
-                          className="px-5 py-12 text-center text-slate-500"
-                        >
-                          No records found for this report and date range.
-                        </td>
+                        {columns.map((field) => (
+                          <th
+                            key={field}
+                            className="whitespace-nowrap px-4 py-3 font-semibold"
+                          >
+                            {columnLabel(field)}
+                          </th>
+                        ))}
                       </tr>
-                    ) : (
-                      rows.map((row, index) => (
-                        <tr
-                          key={String(row.id ?? row.date ?? row.itemId ?? row.customerId ?? index)}
-                          className="hover:bg-slate-50"
-                        >
-                          {columns.map((field) => (
-                            <td
-                              key={field}
-                              className="whitespace-nowrap px-4 py-3 text-slate-700"
-                            >
-                              {displayCell(field, getCellValue(row, field))}
-                            </td>
-                          ))}
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rows.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={Math.max(columns.length, 1)}
+                            className="px-5 py-12 text-center text-slate-500"
+                          >
+                            No records found for this report and date range.
+                          </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {selectedKey === "sale-summary" && (
-                <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-                  The table shows daily totals. Invoice and tax aggregates above are returned by the backend.
+                      ) : (
+                        rows.map((row, index) => (
+                          <tr
+                            key={String(
+                              row.id ??
+                                row.date ??
+                                row.itemId ??
+                                row.customerId ??
+                                index,
+                            )}
+                            className="hover:bg-slate-50"
+                          >
+                            {columns.map((field) => (
+                              <td
+                                key={field}
+                                className="whitespace-nowrap px-4 py-3 text-slate-700"
+                              >
+                                {displayCell(field, getCellValue(row, field))}
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-              )}
-            </>
+
+                {selectedKey === "sale-summary" && (
+                  <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+                    The table shows daily totals. Invoice and tax aggregates
+                    above are returned by the backend.
+                  </div>
+                )}
+              </>
+            )
           )}
 
           {!loading && !error && !result && (

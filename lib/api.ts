@@ -442,7 +442,7 @@ export const api = {
       method: "DELETE",
     }),
 
-   /* =======================================================
+  /* =======================================================
      SALES
   ======================================================= */
 
@@ -465,16 +465,14 @@ export const api = {
     }),
 
   cancelSale: (id: string) =>
-    request<ApiSuccess<any>>(
-      `/sales/${encodeURIComponent(id)}/cancel`,
-      { method: "POST" },
-    ),
+    request<ApiSuccess<any>>(`/sales/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    }),
 
   deleteSale: (id: string) =>
-    request<ApiSuccess<any>>(
-      `/sales/${encodeURIComponent(id)}`,
-      { method: "DELETE" },
-    ),
+    request<ApiSuccess<any>>(`/sales/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   /* =======================================================
      QUOTATIONS
   ======================================================= */
@@ -622,7 +620,10 @@ export const api = {
 
   reportExpense: (params?: Record<string, QueryValue>) =>
     request<ApiSuccess<any>>(`/reports/expense${buildQuery(params)}`),
-
+  reportPaymentCollection: (params?: Record<string, QueryValue>) =>
+    request<ApiSuccess<any>>(
+      `/reports/payment-collection${buildQuery(params)}`,
+    ),
   /* =======================================================
      OTHER INCOME
   ======================================================= */
