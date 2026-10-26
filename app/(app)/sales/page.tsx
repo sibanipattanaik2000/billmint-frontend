@@ -387,7 +387,9 @@ export default function SaleInvoicesPage() {
       // Fetch the complete, real sale record from the backend.
       const response = await api.sale(invoice.id);
       const sale = response?.data as any;
-
+      const businessResponse = await api.businessSettings();
+      const issuingBusiness = businessResponse.data.business;
+      const invoiceSettings = businessResponse.data.settings;
       if (!sale) {
         alert("Unable to fetch the complete invoice details.");
         return;
@@ -395,7 +397,31 @@ export default function SaleInvoicesPage() {
 
       const esc = (value: unknown): string =>
         escapeHtml(value == null || value === "" ? "—" : String(value));
+      const issuingStoreName = esc(issuingBusiness.name || "BillMint");
 
+      const issuingStoreAddress = esc(
+        [
+          issuingBusiness.address,
+          issuingBusiness.city,
+          issuingBusiness.state,
+          issuingBusiness.pinCode,
+        ]
+          .filter(Boolean)
+          .join(", "),
+      );
+
+      const issuingStorePhone = esc(issuingBusiness.phone || "");
+      const issuingStoreEmail = esc(issuingBusiness.email || "");
+      const issuingStoreGstin = esc(issuingBusiness.gstin || "");
+
+      const termsText =
+        invoiceSettings.termsAndConditions?.trim() ||
+        "Goods once sold are subject to the seller's stated return and replacement policy.";
+
+      const termsHtml = termsText
+        .split(/\\r?\\n/)
+        .map((line: string) => `<p>${esc(line)}</p>`)
+        .join("");
       const money = (value: unknown): string =>
         formatINR(toNumber(value)).replace(/^₹\s?/, "");
 
@@ -813,12 +839,12 @@ export default function SaleInvoicesPage() {
         </style>
       </head>
       <body>
-        <header class="invoice-header">
-          <div class="store-name">SUREBUY STORE</div>
-          <div class="store-line">SIRIPUR SQUARE NEAR MIO AMORE CAKE SHOP BHUBANESWAR,</div>
-          <div class="store-line">PIN-751003</div>
-          <div class="store-line">Phone no. : 7853976501, 8079978830</div>
-          <div class="store-line">Email : surebuy178@gmail.com</div>
+              <header class="invoice-header">
+          <div class="store-name">${issuingStoreName}</div>
+          ${issuingStoreAddress !== "—" ? `DIL3` : ""}
+          ${issuingStorePhone !== "—" && issuingStorePhone ? `DIL4` : ""}
+          ${issuingStoreEmail !== "—" && issuingStoreEmail ? `DIL5` : ""}
+          ${issuingStoreGstin !== "—" && issuingStoreGstin ? `DIL6` : ""}
         </header>
 
         <div class="invoice-title">USED MOBILES</div>
@@ -869,10 +895,8 @@ export default function SaleInvoicesPage() {
             <div class="words">${esc(amountInWords(total))}</div>
 
             <div class="bottom-heading">Terms and Conditions</div>
-            <div class="terms">
-              <p>*Goods once sold can not be exchanged or money refunded!</p>
-              <p>*we are manufacturer representative only!</p>
-              <p>*All types of problem will be entertain at manufacturers service centre only!</p>
+                      <div class="terms">
+              ${termsHtml}
             </div>
           </div>
 
@@ -899,8 +923,8 @@ export default function SaleInvoicesPage() {
             </div>
 
             <div class="signature">
-              <div class="signature-for">For :SUREBUY STORE</div>
-              <div class="signature-space"></div>
+              <div class="signature-for">For: ${issuingStoreName}</div>
+                            <div class="signature-space"></div>
               <div class="signature-label">Authorized Signatory</div>
             </div>
           </div>

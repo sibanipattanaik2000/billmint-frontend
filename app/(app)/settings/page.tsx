@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -16,6 +15,7 @@ type SettingsData = {
     city: string | null;
     state: string | null;
     financialYearStart: number;
+    storeCode: string;
   };
   settings: {
     invoicePrefix: string;
@@ -40,13 +40,7 @@ type SettingsData = {
   };
 };
 
-type Tab =
-  | "company"
-  | "invoice"
-  | "tax"
-  | "users"
-  | "backup"
-  | "general";
+type Tab = "company" | "invoice" | "tax" | "users" | "backup" | "general";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "company", label: "Company Profile" },
@@ -79,7 +73,11 @@ export default function SettingsPage() {
     try {
       const response = await api.businessSettings();
 
-      if (!response.success || !response.data?.business || !response.data?.settings) {
+      if (
+        !response.success ||
+        !response.data?.business ||
+        !response.data?.settings
+      ) {
         throw new Error("The server returned an invalid settings response.");
       }
 
@@ -151,6 +149,7 @@ export default function SettingsPage() {
           city: emptyToNull(business.city ?? ""),
           state: emptyToNull(business.state ?? ""),
           financialYearStart: Number(business.financialYearStart),
+          storeCode: business.storeCode.trim().toUpperCase(),
         },
         settings: {
           invoicePrefix: settings.invoicePrefix.trim(),
@@ -308,6 +307,12 @@ export default function SettingsPage() {
             <section className="max-w-3xl space-y-5">
               <h2 className="text-lg font-semibold">Company Profile</h2>
               <div className="grid gap-4 sm:grid-cols-2">
+                {field(
+                  "Store Code",
+                  business.storeCode,
+                  (v) => updateBusiness("storeCode", v.toUpperCase()),
+                  { placeholder: "e.g. BBSR001" },
+                )}
                 {field("Company Name", business.name, (v) =>
                   updateBusiness("name", v),
                 )}

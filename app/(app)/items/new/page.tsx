@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -17,10 +17,15 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 
+type StoreOption = {
+  storeCode: string;
+  name: string;
+};
+
 type FormState = {
   name: string;
   itemType: "PRODUCT" | "SERVICE";
-
+  sourceStoreCode: string;
   /**
    * Internal business item code.
    * Sales will use this code to identify the item.
@@ -66,7 +71,7 @@ type FormState = {
 const initialForm: FormState = {
   name: "",
   itemType: "PRODUCT",
-
+  sourceStoreCode: "",
   sku: "",
   barcode: "",
   imei: "",
@@ -198,13 +203,7 @@ function Select({
   );
 }
 
-function AddButton({
-  onClick,
-  title,
-}: {
-  onClick: () => void;
-  title: string;
-}) {
+function AddButton({ onClick, title }: { onClick: () => void; title: string }) {
   return (
     <button
       type="button"
@@ -233,9 +232,7 @@ function Section({
           {icon}
         </div>
 
-        <h2 className="text-sm font-semibold text-slate-800">
-          {title}
-        </h2>
+        <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
       </div>
 
       <div className="p-5">{children}</div>
@@ -250,16 +247,45 @@ export default function NewItemPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const update = <K extends keyof FormState>(
-    key: K,
-    value: FormState[K],
-  ) => {
+  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({
       ...prev,
       [key]: value,
     }));
   };
+  const [stores, setStores] = useState<StoreOption[]>([]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStoreOptions() {
+      try {
+        const [storesResponse, meResponse] = await Promise.all([
+          api.stores(),
+          api.me(),
+        ]);
+
+        if (cancelled) return;
+
+        setStores(storesResponse.data);
+
+        const activeStoreCode = meResponse.data?.business?.storeCode ?? "";
+
+        setForm((current) => ({
+          ...current,
+          sourceStoreCode: current.sourceStoreCode || activeStoreCode,
+        }));
+      } catch (error) {
+        console.error("Unable to load store options:", error);
+      }
+    }
+
+    void loadStoreOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   /**
    * Barcode scanners generally behave like keyboards.
    *
@@ -344,37 +370,25 @@ export default function NewItemPage() {
          * products may not have one.
          */
         barcode: form.barcode.trim() || undefined,
-
+        sourceStoreCode: form.sourceStoreCode || undefined,
         /**
          * IMEI is now a first-class item field.
          *
          * Do not send it for services.
          */
-        imei:
-          form.itemType === "PRODUCT"
-            ? form.imei.trim()
-            : undefined,
+        imei: form.itemType === "PRODUCT" ? form.imei.trim() : undefined,
 
         categoryId: form.categoryId || undefined,
         unitId: form.unitId || undefined,
 
-        description:
-          form.description.trim() || undefined,
+        description: form.description.trim() || undefined,
 
         purchasePrice:
-          form.purchasePrice === ""
-            ? 0
-            : Number(form.purchasePrice),
+          form.purchasePrice === "" ? 0 : Number(form.purchasePrice),
 
-        salePrice:
-          form.salePrice === ""
-            ? 0
-            : Number(form.salePrice),
+        salePrice: form.salePrice === "" ? 0 : Number(form.salePrice),
 
-        mrp:
-          form.mrp === ""
-            ? null
-            : Number(form.mrp),
+        mrp: form.mrp === "" ? null : Number(form.mrp),
 
         openingStock:
           form.itemType === "SERVICE"
@@ -390,33 +404,21 @@ export default function NewItemPage() {
               ? 0
               : Number(form.minimumStock),
 
-        gstRate:
-          form.gstRate === ""
-            ? 0
-            : Number(form.gstRate),
+        gstRate: form.gstRate === "" ? 0 : Number(form.gstRate),
 
         discountPercent:
-          form.discountPercent === ""
-            ? 0
-            : Number(form.discountPercent),
+          form.discountPercent === "" ? 0 : Number(form.discountPercent),
 
         /**
          * IMEI-tracked products are always serialized.
          * This prevents accidentally treating an IMEI device
          * as anonymous quantity-only stock.
          */
-        trackSerial:
-          form.itemType === "PRODUCT"
-            ? true
-            : false,
+        trackSerial: form.itemType === "PRODUCT" ? true : false,
 
-        trackBatch:
-          form.itemType === "PRODUCT" &&
-          form.trackBatch,
+        trackBatch: form.itemType === "PRODUCT" && form.trackBatch,
 
-        trackExpiry:
-          form.itemType === "PRODUCT" &&
-          form.trackExpiry,
+        trackExpiry: form.itemType === "PRODUCT" && form.trackExpiry,
       };
 
       await api.createItem(payload);
@@ -463,33 +465,34 @@ export default function NewItemPage() {
 
         <div className="space-y-5">
           {/* ITEM DETAILS */}
-          <Section
-            icon={<Package className="h-4 w-4" />}
-            title="Item Details"
-          >
+          <Section icon={<Package className="h-4 w-4" />} title="Item Details">
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-              <Field
-                label="Item Name"
-                required
-                className="md:col-span-2"
-              >
+              <Field label="Item Name" required className="md:col-span-2">
                 <Input
                   value={form.name}
-                  onChange={(value) =>
-                    update("name", value)
-                  }
+                  onChange={(value) => update("name", value)}
                   placeholder="Enter item name"
                 />
               </Field>
-
+              <Field label="Source Store">
+                <Select
+                  value={form.sourceStoreCode}
+                  onChange={(value) => update("sourceStoreCode", value)}
+                >
+                  <option value="">Not specified</option>
+                  {stores.map((store) => (
+                    <option key={store.storeCode} value={store.storeCode}>
+                      {store.storeCode} — {store.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
               {/* PRODUCT / SERVICE */}
               <Field label="Item Type">
                 <div className="flex h-10 rounded-md border border-slate-300 bg-slate-50 p-1">
                   <button
                     type="button"
-                    onClick={() =>
-                      update("itemType", "PRODUCT")
-                    }
+                    onClick={() => update("itemType", "PRODUCT")}
                     className={[
                       "flex-1 rounded text-sm font-medium transition",
                       form.itemType === "PRODUCT"
@@ -502,9 +505,7 @@ export default function NewItemPage() {
 
                   <button
                     type="button"
-                    onClick={() =>
-                      update("itemType", "SERVICE")
-                    }
+                    onClick={() => update("itemType", "SERVICE")}
                     className={[
                       "flex-1 rounded text-sm font-medium transition",
                       form.itemType === "SERVICE"
@@ -521,26 +522,19 @@ export default function NewItemPage() {
               <Field label="Item Code / SKU">
                 <Input
                   value={form.sku}
-                  onChange={(value) =>
-                    update("sku", value)
-                  }
+                  onChange={(value) => update("sku", value)}
                   placeholder="Enter item code"
                 />
               </Field>
 
               {/* IMEI */}
               {form.itemType === "PRODUCT" && (
-                <Field
-                  label="IMEI Number"
-                  required
-                >
+                <Field label="IMEI Number" required>
                   <Input
                     value={form.imei}
                     onChange={handleImeiChange}
                     placeholder="Enter 15-digit IMEI"
-                    prefix={
-                      <Smartphone className="h-4 w-4" />
-                    }
+                    prefix={<Smartphone className="h-4 w-4" />}
                     inputMode="numeric"
                     maxLength={15}
                   />
@@ -555,19 +549,15 @@ export default function NewItemPage() {
               <Field label="Barcode">
                 <Input
                   value={form.barcode}
-                  onChange={(value) =>
-                    update("barcode", value)
-                  }
+                  onChange={(value) => update("barcode", value)}
                   onKeyDown={handleBarcodeKeyDown}
                   placeholder="Scan or enter barcode"
-                  prefix={
-                    <Barcode className="h-4 w-4" />
-                  }
+                  prefix={<Barcode className="h-4 w-4" />}
                 />
 
                 <p className="mt-1.5 text-xs text-slate-400">
-                  Focus this field and scan using a USB/Bluetooth
-                  barcode scanner.
+                  Focus this field and scan using a USB/Bluetooth barcode
+                  scanner.
                 </p>
               </Field>
 
@@ -577,31 +567,15 @@ export default function NewItemPage() {
                   <div className="flex gap-2">
                     <Select
                       value={form.unitId}
-                      onChange={(value) =>
-                        update("unitId", value)
-                      }
+                      onChange={(value) => update("unitId", value)}
                     >
-                      <option value="">
-                        Select unit
-                      </option>
-                      <option value="PCS">
-                        PCS
-                      </option>
-                      <option value="BOX">
-                        BOX
-                      </option>
-                      <option value="KG">
-                        KG
-                      </option>
-                      <option value="GRAM">
-                        GRAM
-                      </option>
-                      <option value="LTR">
-                        LTR
-                      </option>
-                      <option value="MTR">
-                        MTR
-                      </option>
+                      <option value="">Select unit</option>
+                      <option value="PCS">PCS</option>
+                      <option value="BOX">BOX</option>
+                      <option value="KG">KG</option>
+                      <option value="GRAM">GRAM</option>
+                      <option value="LTR">LTR</option>
+                      <option value="MTR">MTR</option>
                     </Select>
 
                     <AddButton
@@ -621,28 +595,14 @@ export default function NewItemPage() {
                 <div className="flex gap-2">
                   <Select
                     value={form.categoryId}
-                    onChange={(value) =>
-                      update("categoryId", value)
-                    }
+                    onChange={(value) => update("categoryId", value)}
                   >
-                    <option value="">
-                      Select category
-                    </option>
-                    <option value="GENERAL">
-                      General
-                    </option>
-                    <option value="ELECTRONICS">
-                      Electronics
-                    </option>
-                    <option value="GROCERY">
-                      Grocery
-                    </option>
-                    <option value="CLOTHING">
-                      Clothing
-                    </option>
-                    <option value="OTHER">
-                      Other
-                    </option>
+                    <option value="">Select category</option>
+                    <option value="GENERAL">General</option>
+                    <option value="ELECTRONICS">Electronics</option>
+                    <option value="GROCERY">Grocery</option>
+                    <option value="CLOTHING">Clothing</option>
+                    <option value="OTHER">Other</option>
                   </Select>
 
                   <AddButton
@@ -657,18 +617,10 @@ export default function NewItemPage() {
               </Field>
 
               {/* DESCRIPTION */}
-              <Field
-                label="Description"
-                className="md:col-span-2"
-              >
+              <Field label="Description" className="md:col-span-2">
                 <textarea
                   value={form.description}
-                  onChange={(e) =>
-                    update(
-                      "description",
-                      e.target.value,
-                    )
-                  }
+                  onChange={(e) => update("description", e.target.value)}
                   rows={3}
                   placeholder="Enter item description"
                   className="w-full resize-none rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
@@ -683,23 +635,13 @@ export default function NewItemPage() {
             title="Price Details"
           >
             <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-              <Field
-                label="Sale Price"
-                required
-              >
+              <Field label="Sale Price" required>
                 <Input
                   type="number"
                   value={form.salePrice}
-                  onChange={(value) =>
-                    update(
-                      "salePrice",
-                      value,
-                    )
-                  }
+                  onChange={(value) => update("salePrice", value)}
                   placeholder="0.00"
-                  prefix={
-                    <IndianRupee className="h-4 w-4" />
-                  }
+                  prefix={<IndianRupee className="h-4 w-4" />}
                 />
               </Field>
 
@@ -707,16 +649,9 @@ export default function NewItemPage() {
                 <Input
                   type="number"
                   value={form.purchasePrice}
-                  onChange={(value) =>
-                    update(
-                      "purchasePrice",
-                      value,
-                    )
-                  }
+                  onChange={(value) => update("purchasePrice", value)}
                   placeholder="0.00"
-                  prefix={
-                    <IndianRupee className="h-4 w-4" />
-                  }
+                  prefix={<IndianRupee className="h-4 w-4" />}
                 />
               </Field>
 
@@ -724,13 +659,9 @@ export default function NewItemPage() {
                 <Input
                   type="number"
                   value={form.mrp}
-                  onChange={(value) =>
-                    update("mrp", value)
-                  }
+                  onChange={(value) => update("mrp", value)}
                   placeholder="0.00"
-                  prefix={
-                    <IndianRupee className="h-4 w-4" />
-                  }
+                  prefix={<IndianRupee className="h-4 w-4" />}
                 />
               </Field>
             </div>
@@ -739,14 +670,9 @@ export default function NewItemPage() {
               <label className="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
                 <input
                   type="checkbox"
-                  checked={
-                    form.salePriceIncludesTax
-                  }
+                  checked={form.salePriceIncludesTax}
                   onChange={(e) =>
-                    update(
-                      "salePriceIncludesTax",
-                      e.target.checked,
-                    )
+                    update("salePriceIncludesTax", e.target.checked)
                   }
                   className="h-4 w-4 accent-brand-600"
                 />
@@ -765,14 +691,9 @@ export default function NewItemPage() {
               <label className="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
                 <input
                   type="checkbox"
-                  checked={
-                    form.purchasePriceIncludesTax
-                  }
+                  checked={form.purchasePriceIncludesTax}
                   onChange={(e) =>
-                    update(
-                      "purchasePriceIncludesTax",
-                      e.target.checked,
-                    )
+                    update("purchasePriceIncludesTax", e.target.checked)
                   }
                   className="h-4 w-4 accent-brand-600"
                 />
@@ -799,40 +720,21 @@ export default function NewItemPage() {
               <Field label="GST Rate">
                 <Select
                   value={form.gstRate}
-                  onChange={(value) =>
-                    update("gstRate", value)
-                  }
+                  onChange={(value) => update("gstRate", value)}
                 >
-                  <option value="0">
-                    GST 0%
-                  </option>
-                  <option value="5">
-                    GST 5%
-                  </option>
-                  <option value="12">
-                    GST 12%
-                  </option>
-                  <option value="18">
-                    GST 18%
-                  </option>
-                  <option value="28">
-                    GST 28%
-                  </option>
+                  <option value="0">GST 0%</option>
+                  <option value="5">GST 5%</option>
+                  <option value="12">GST 12%</option>
+                  <option value="18">GST 18%</option>
+                  <option value="28">GST 28%</option>
                 </Select>
               </Field>
 
               <Field label="Discount">
                 <Input
                   type="number"
-                  value={
-                    form.discountPercent
-                  }
-                  onChange={(value) =>
-                    update(
-                      "discountPercent",
-                      value,
-                    )
-                  }
+                  value={form.discountPercent}
+                  onChange={(value) => update("discountPercent", value)}
                   placeholder="0"
                   suffix="%"
                 />
@@ -842,23 +744,13 @@ export default function NewItemPage() {
 
           {/* STOCK */}
           {form.itemType === "PRODUCT" && (
-            <Section
-              icon={<Boxes className="h-4 w-4" />}
-              title="Opening Stock"
-            >
+            <Section icon={<Boxes className="h-4 w-4" />} title="Opening Stock">
               <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
                 <Field label="Opening Quantity">
                   <Input
                     type="number"
-                    value={
-                      form.openingStock
-                    }
-                    onChange={(value) =>
-                      update(
-                        "openingStock",
-                        value,
-                      )
-                    }
+                    value={form.openingStock}
+                    onChange={(value) => update("openingStock", value)}
                     placeholder="0"
                   />
                 </Field>
@@ -866,34 +758,18 @@ export default function NewItemPage() {
                 <Field label="Opening Stock Rate">
                   <Input
                     type="number"
-                    value={
-                      form.openingStockRate
-                    }
-                    onChange={(value) =>
-                      update(
-                        "openingStockRate",
-                        value,
-                      )
-                    }
+                    value={form.openingStockRate}
+                    onChange={(value) => update("openingStockRate", value)}
                     placeholder="0.00"
-                    prefix={
-                      <IndianRupee className="h-4 w-4" />
-                    }
+                    prefix={<IndianRupee className="h-4 w-4" />}
                   />
                 </Field>
 
                 <Field label="Minimum Stock">
                   <Input
                     type="number"
-                    value={
-                      form.minimumStock
-                    }
-                    onChange={(value) =>
-                      update(
-                        "minimumStock",
-                        value,
-                      )
-                    }
+                    value={form.minimumStock}
+                    onChange={(value) => update("minimumStock", value)}
                     placeholder="0"
                   />
                 </Field>
@@ -901,9 +777,8 @@ export default function NewItemPage() {
 
               <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-xs text-slate-500">
-                  For IMEI-tracked products, the backend
-                  will later validate that the serialized
-                  inventory quantity and individual IMEI
+                  For IMEI-tracked products, the backend will later validate
+                  that the serialized inventory quantity and individual IMEI
                   records remain consistent.
                 </p>
               </div>
@@ -921,12 +796,7 @@ export default function NewItemPage() {
                   <input
                     type="checkbox"
                     checked={form.trackBatch}
-                    onChange={(e) =>
-                      update(
-                        "trackBatch",
-                        e.target.checked,
-                      )
-                    }
+                    onChange={(e) => update("trackBatch", e.target.checked)}
                     className="h-4 w-4 accent-brand-600"
                   />
 
@@ -958,12 +828,7 @@ export default function NewItemPage() {
                   <input
                     type="checkbox"
                     checked={form.trackExpiry}
-                    onChange={(e) =>
-                      update(
-                        "trackExpiry",
-                        e.target.checked,
-                      )
-                    }
+                    onChange={(e) => update("trackExpiry", e.target.checked)}
                     className="h-4 w-4 accent-brand-600"
                   />
 
@@ -1003,9 +868,7 @@ export default function NewItemPage() {
           >
             <Save className="h-4 w-4" />
 
-            {saving
-              ? "Saving..."
-              : "Save Item"}
+            {saving ? "Saving..." : "Save Item"}
           </button>
         </div>
       </main>

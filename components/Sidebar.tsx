@@ -16,6 +16,7 @@ import {
   ArrowDownUp,
   LogOut,
   ChevronDown,
+  Store,
 } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
@@ -60,6 +61,7 @@ const nav = [
   { href: "/cash-bank", label: "Cash & Bank", icon: ArrowDownUp },
   { href: "/reports", label: "Reports", icon: BarChart3 },
   { href: "/import-export", label: "Import / Export", icon: FileText },
+  { href: "/stores", label: "Store Directory", icon: Store },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

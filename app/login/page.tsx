@@ -1,31 +1,71 @@
-'use client';
+"use client";
 
-import { useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { api, ApiError } from '@/lib/api';
-import { Receipt } from 'lucide-react';
+import { useState, FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { api, ApiError } from "@/lib/api";
+import { Receipt } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('');
+  const [userId, setUserId] = useState("");
+  const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [storeCode, setStoreCode] = useState("");
+  const [storePreview, setStorePreview] = useState<{
+    storeCode: string;
+    name: string;
+    city: string | null;
+    state: string | null;
+  } | null>(null);
+  const [storeLookupError, setStoreLookupError] = useState("");
+  const [checkingStore, setCheckingStore] = useState(false);
+  async function checkStoreCode() {
+    const code = storeCode.trim().toUpperCase();
 
+    setStorePreview(null);
+    setStoreLookupError("");
+
+    if (!code) return;
+
+    setCheckingStore(true);
+
+    try {
+      const response = await api.storeByCode(code);
+      setStorePreview({
+        storeCode: response.data.storeCode,
+        name: response.data.name,
+        city: response.data.city,
+        state: response.data.state,
+      });
+      setStoreCode(response.data.storeCode);
+    } catch (err) {
+      setStoreLookupError(
+        err instanceof ApiError ? err.message : "Unable to find this store.",
+      );
+    } finally {
+      setCheckingStore(false);
+    }
+  }
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError('');
+    setError("");
     setLoading(true);
     try {
-      await api.login(userId, password, rememberMe);
-      router.push('/dashboard');
+      await api.login(
+        storeCode.trim().toUpperCase(),
+        userId,
+        password,
+        rememberMe,
+      );
+      router.push("/dashboard");
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError('Unable to connect to server');
+        setError("Unable to connect to server");
       }
     } finally {
       setLoading(false);
@@ -44,13 +84,17 @@ export default function LoginPage() {
         </div>
         <div>
           <h1 className="text-4xl font-bold leading-tight mb-4">
-            Smart Billing &<br />Business Management
+            Smart Billing &<br />
+            Business Management
           </h1>
           <p className="text-brand-100 text-lg max-w-md">
-            GST invoices, inventory, payments, and reports — everything your Indian business needs in one place.
+            GST invoices, inventory, payments, and reports — everything your
+            Indian business needs in one place.
           </p>
         </div>
-        <p className="text-brand-200 text-sm">Built for retail, wholesale & traders</p>
+        <p className="text-brand-200 text-sm">
+          Built for retail, wholesale & traders
+        </p>
       </div>
 
       {/* Right panel */}
@@ -63,8 +107,12 @@ export default function LoginPage() {
             <span className="text-xl font-bold text-slate-900">BillMint</span>
           </div>
 
-          <h2 className="text-2xl font-bold text-slate-900 mb-1">Welcome back</h2>
-          <p className="text-slate-500 mb-8">Sign in with your User ID and password</p>
+          <h2 className="text-2xl font-bold text-slate-900 mb-1">
+            Welcome back
+          </h2>
+          <p className="text-slate-500 mb-8">
+            Sign in with your User ID and password
+          </p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
@@ -72,9 +120,54 @@ export default function LoginPage() {
                 {error}
               </div>
             )}
-
             <div>
-              <label className="label" htmlFor="userId">User ID</label>
+              <label className="label" htmlFor="storeCode">
+                Store Code
+              </label>
+              <input
+                id="storeCode"
+                className="input"
+                type="text"
+                value={storeCode}
+                onChange={(e) => {
+                  setStoreCode(e.target.value.toUpperCase());
+                  setStorePreview(null);
+                  setStoreLookupError("");
+                }}
+                onBlur={() => void checkStoreCode()}
+                placeholder="e.g. BBSR001"
+                autoComplete="off"
+                maxLength={20}
+                required
+              />
+
+              {checkingStore && (
+                <p className="mt-1 text-xs text-slate-500">Checking store…</p>
+              )}
+
+              {storeLookupError && (
+                <p role="alert" className="mt-1 text-xs text-red-600">
+                  {storeLookupError}
+                </p>
+              )}
+
+              {storePreview && (
+                <div className="mt-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+                  <p className="text-sm font-semibold text-green-800">
+                    {storePreview.name}
+                  </p>
+                  <p className="text-xs text-green-700">
+                    {storePreview.storeCode}
+                    {storePreview.city ? ` · ${storePreview.city}` : ""}
+                    {storePreview.state ? `, ${storePreview.state}` : ""}
+                  </p>
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="label" htmlFor="userId">
+                User ID
+              </label>
               <input
                 id="userId"
                 className="input"
@@ -89,7 +182,9 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="label" htmlFor="password">Password</label>
+              <label className="label" htmlFor="password">
+                Password
+              </label>
               <input
                 id="password"
                 className="input"
@@ -112,19 +207,29 @@ export default function LoginPage() {
                 />
                 Remember me
               </label>
-              <Link href="/forgot-password" className="text-sm text-brand-600 hover:text-brand-700">
+              <Link
+                href="/forgot-password"
+                className="text-sm text-brand-600 hover:text-brand-700"
+              >
                 Forgot password?
               </Link>
             </div>
 
-            <button type="submit" className="btn-primary w-full py-2.5" disabled={loading}>
-              {loading ? 'Signing in...' : 'Login'}
+            <button
+              type="submit"
+              className="btn-primary w-full py-2.5"
+              disabled={loading}
+            >
+              {loading ? "Signing in..." : "Login"}
             </button>
           </form>
 
           <p className="mt-8 text-center text-sm text-slate-500">
-            Don&apos;t have an account?{' '}
-            <Link href="/register" className="text-brand-600 font-medium hover:text-brand-700">
+            Don&apos;t have an account?{" "}
+            <Link
+              href="/register"
+              className="text-brand-600 font-medium hover:text-brand-700"
+            >
               Register your business
             </Link>
           </p>

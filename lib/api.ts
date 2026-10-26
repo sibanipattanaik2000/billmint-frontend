@@ -122,16 +122,51 @@ export const api = {
      AUTH
   ======================================================= */
 
-  login: (userId: string, password: string, rememberMe = false) =>
+  login: (
+    storeCode: string,
+    userId: string,
+    password: string,
+    rememberMe = false,
+  ) =>
     request<ApiSuccess<any>>("/auth/login", {
       method: "POST",
       body: JSON.stringify({
+        storeCode,
         userId,
         password,
         rememberMe,
       }),
     }),
-
+  storeByCode: (storeCode: string) =>
+    request<
+      ApiSuccess<{
+        storeCode: string;
+        name: string;
+        address: string | null;
+        city: string | null;
+        state: string | null;
+        pinCode: string | null;
+        phone: string | null;
+        email: string | null;
+        gstin: string | null;
+      }>
+    >(`/stores/${encodeURIComponent(storeCode.trim().toUpperCase())}`),
+  stores: () =>
+    request<
+      ApiSuccess<
+        {
+          storeCode: string;
+          name: string;
+          address: string | null;
+          city: string | null;
+          state: string | null;
+          pinCode: string | null;
+          phone: string | null;
+          email: string | null;
+          gstin: string | null;
+        }[]
+      >
+    >("/stores"),
   register: (data: Record<string, any>) =>
     request<ApiSuccess<any>>("/auth/register", {
       method: "POST",
@@ -169,6 +204,7 @@ export const api = {
           logoUrl: string | null;
           signatureUrl: string | null;
           updatedAt: string;
+          storeCode: string;
         };
         settings: {
           invoicePrefix: string;
