@@ -485,6 +485,34 @@ export const api = {
   sales: (params?: Record<string, QueryValue>) =>
     request<PaginatedResponse<any>>(`/sales${buildQuery(params)}`),
 
+  allStoreSales: (params?: {
+    page?: number;
+    limit?: number;
+    storeCode?: string;
+    from?: string;
+    to?: string;
+  }) =>
+    request<{
+      success: boolean;
+      data: Array<{
+        invoiceNumber: string;
+        date: string;
+        storeCode: string;
+        storeName: string;
+        amount: number | string;
+        paidAmount: number | string;
+        balanceAmount: number | string;
+        status: string;
+      }>;
+      summary: {
+        invoiceCount: number;
+        totalSales: number | string;
+        totalReceived: number | string;
+        totalOutstanding: number | string;
+      };
+      pagination: PaginationResponse;
+    }>(`/sales/all-stores${buildQuery(params)}`),
+
   sale: (id: string) =>
     request<ApiSuccess<any>>(`/sales/${encodeURIComponent(id)}`),
 
@@ -509,6 +537,7 @@ export const api = {
     request<ApiSuccess<any>>(`/sales/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+
   /* =======================================================
      QUOTATIONS
   ======================================================= */

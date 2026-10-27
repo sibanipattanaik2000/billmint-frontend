@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
-import { useRouter } from "next/navigation";
 import clsx from "clsx";
 
 const nav = [
@@ -31,6 +30,7 @@ const nav = [
     children: [
       { href: "/sales", label: "Invoices" },
       { href: "/sales/new", label: "New Sale" },
+      { href: "/sales/all-stores", label: "All-Store Sales" },
       { href: "/sales/quotations", label: "Quotations" },
       { href: "/sales/returns", label: "Returns" },
       { href: "/payments/in", label: "Payments-In" },
@@ -98,12 +98,17 @@ export default function Sidebar() {
           if (item.children) {
             const isOpen =
               open[item.label] ??
-              item.children.some((c) => pathname.startsWith(c.href));
+              item.children.some((child) => pathname.startsWith(child.href));
+
             return (
               <div key={item.label}>
                 <button
+                  type="button"
                   onClick={() =>
-                    setOpen((s) => ({ ...s, [item.label]: !isOpen }))
+                    setOpen((state) => ({
+                      ...state,
+                      [item.label]: !isOpen,
+                    }))
                   }
                   className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm hover:bg-slate-800 hover:text-white transition-colors"
                 >
@@ -116,6 +121,7 @@ export default function Sidebar() {
                     )}
                   />
                 </button>
+
                 {isOpen && (
                   <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-700 pl-3">
                     {item.children.map((child) => (
@@ -140,6 +146,7 @@ export default function Sidebar() {
 
           const active =
             pathname === item.href || pathname.startsWith(item.href + "/");
+
           return (
             <Link
               key={item.href}
@@ -160,6 +167,7 @@ export default function Sidebar() {
 
       <div className="p-3 border-t border-slate-800">
         <button
+          type="button"
           onClick={handleLogout}
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm hover:bg-slate-800 hover:text-white transition-colors"
         >

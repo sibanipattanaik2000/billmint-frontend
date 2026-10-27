@@ -149,7 +149,7 @@ export default function SettingsPage() {
           city: emptyToNull(business.city ?? ""),
           state: emptyToNull(business.state ?? ""),
           financialYearStart: Number(business.financialYearStart),
-          storeCode: business.storeCode.trim().toUpperCase(),
+         // storeCode: business.storeCode.trim().toUpperCase(),
         },
         settings: {
           invoicePrefix: settings.invoicePrefix.trim(),
@@ -307,12 +307,20 @@ export default function SettingsPage() {
             <section className="max-w-3xl space-y-5">
               <h2 className="text-lg font-semibold">Company Profile</h2>
               <div className="grid gap-4 sm:grid-cols-2">
-                {field(
-                  "Store Code",
-                  business.storeCode,
-                  (v) => updateBusiness("storeCode", v.toUpperCase()),
-                  { placeholder: "e.g. BBSR001" },
-                )}
+                <div>
+                  <label className={labelClass}>Store Code</label>
+                  <input
+                    className={`${inputClass} cursor-not-allowed bg-gray-100 font-semibold tracking-wide`}
+                    type="text"
+                    value={business.storeCode || ""}
+                    readOnly
+                    aria-readonly="true"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    This unique code identifies your store and is used during
+                    login.
+                  </p>
+                </div>
                 {field("Company Name", business.name, (v) =>
                   updateBusiness("name", v),
                 )}
