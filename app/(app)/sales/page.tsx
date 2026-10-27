@@ -397,23 +397,32 @@ export default function SaleInvoicesPage() {
 
       const esc = (value: unknown): string =>
         escapeHtml(value == null || value === "" ? "—" : String(value));
-      const issuingStoreName = esc(issuingBusiness.name || "BillMint");
 
-      const issuingStoreAddress = esc(
-        [
-          issuingBusiness.address,
-          issuingBusiness.city,
-          issuingBusiness.state,
-          issuingBusiness.pinCode,
+      // New invoices use the seller details saved at sale creation.
+      // Existing invoices fall back to the current business profile.
+      const seller = {
+        name: sale.sellerBusinessName || issuingBusiness.name || "BillMint",
+        address: [
+          sale.sellerAddress ?? issuingBusiness.address,
+          sale.sellerCity ?? issuingBusiness.city,
+          sale.sellerState ?? issuingBusiness.state,
+          sale.sellerPinCode ?? issuingBusiness.pinCode,
         ]
           .filter(Boolean)
           .join(", "),
-      );
+        phone: sale.sellerPhone ?? issuingBusiness.phone ?? "",
+        email: sale.sellerEmail ?? issuingBusiness.email ?? "",
+        gstin: sale.sellerGstin ?? issuingBusiness.gstin ?? "",
+        storeCode: sale.sellerStoreCode ?? issuingBusiness.storeCode ?? "",
+        logoUrl: sale.sellerLogoUrl ?? issuingBusiness.logoUrl ?? "",
+      };
 
-      const issuingStorePhone = esc(issuingBusiness.phone || "");
-      const issuingStoreEmail = esc(issuingBusiness.email || "");
-      const issuingStoreGstin = esc(issuingBusiness.gstin || "");
-
+      const issuingStoreName = esc(seller.name);
+      const issuingStoreAddress = esc(seller.address);
+      const issuingStorePhone = esc(seller.phone);
+      const issuingStoreEmail = esc(seller.email);
+      const issuingStoreGstin = esc(seller.gstin);
+      const issuingStoreCode = esc(seller.storeCode);
       const termsText =
         invoiceSettings.termsAndConditions?.trim() ||
         "Goods once sold are subject to the seller's stated return and replacement policy.";
@@ -469,6 +478,9 @@ export default function SaleInvoicesPage() {
       const itemRows = items
         .map((item: any, index: number) => {
           const product = item.item ?? item.product ?? {};
+          const sourceStoreCode = String(
+            item.sourceStoreCode ?? product.sourceStoreCode ?? "",
+          ).trim();
           const inventoryUnit =
             item.inventoryUnit ?? item.inventoryUnits?.[0] ?? {};
 
@@ -502,6 +514,11 @@ export default function SaleInvoicesPage() {
             <td class="number">${index + 1}</td>
             <td class="item-name">
               <strong>${esc(itemName)}</strong>
+              ${
+                sourceStoreCode
+                  ? `<div class="subline">Source Store: ${esc(sourceStoreCode)}</div>`
+                  : ""
+              }
               ${itemCode ? `<div class="subline">ITEM CODE: ${esc(itemCode)}</div>` : ""}
               ${imei ? `<div class="subline">IMEI: ${esc(imei)}</div>` : ""}
             </td>
@@ -841,6 +858,11 @@ export default function SaleInvoicesPage() {
       <body>
               <header class="invoice-header">
           <div class="store-name">${issuingStoreName}</div>
+          ${
+            issuingStoreCode !== "—" && issuingStoreCode
+              ? `<div class="store-line">Store Code: ${issuingStoreCode}</div>`
+              : ""
+          }
           ${issuingStoreAddress !== "—" ? `DIL3` : ""}
           ${issuingStorePhone !== "—" && issuingStorePhone ? `DIL4` : ""}
           ${issuingStoreEmail !== "—" && issuingStoreEmail ? `DIL5` : ""}

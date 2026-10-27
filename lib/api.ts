@@ -358,6 +358,22 @@ export const api = {
       }),
     }),
 
+  stockTransfers: () =>
+    request<ApiSuccess<any[]>>("/stock-transfers"),
+
+  createStockTransfer: (data: {
+    toStoreCode: string;
+    items: Array<{
+      itemId: string;
+      quantity: number;
+    }>;
+    notes?: string;
+  }) =>
+    request<ApiSuccess<any>>("/stock-transfers", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   /* =======================================================
      CASH & BANK
   ======================================================= */

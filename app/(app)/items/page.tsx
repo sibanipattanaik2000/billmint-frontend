@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -37,6 +36,7 @@ interface Item {
   trackSerial?: boolean;
   trackExpiry?: boolean;
   status?: string;
+  sourceStoreCode?: string | null;
   modelName?: string | null;
   deviceCode?: string | null;
   inventoryUnits?: {
@@ -154,13 +154,16 @@ export default function ItemsPage() {
               item.modelName,
               item.sku,
               item.deviceCode,
+              item.sourceStoreCode,
               item.barcode,
               item.imei,
               item.brand?.name,
               ...(item.inventoryUnits ?? []).map((unit) => unit.itemCode),
               ...(item.inventoryUnits ?? []).map((unit) => unit.imei),
             ].some((value) =>
-              String(value ?? "").toLowerCase().includes(query),
+              String(value ?? "")
+                .toLowerCase()
+                .includes(query),
             ),
           );
         });
@@ -297,8 +300,7 @@ export default function ItemsPage() {
     if (!selectedItem) return 0;
 
     return (
-      toNumber(selectedItem.currentStock) *
-      toNumber(selectedItem.purchasePrice)
+      toNumber(selectedItem.currentStock) * toNumber(selectedItem.purchasePrice)
     );
   }, [selectedItem]);
 
@@ -322,9 +324,7 @@ export default function ItemsPage() {
     const modelName =
       selectedItem.modelName?.trim() || selectedItem.name.trim();
 
-    return (
-      modelGroups.find((group) => group.modelName === modelName) ?? null
-    );
+    return modelGroups.find((group) => group.modelName === modelName) ?? null;
   }, [selectedItem, modelGroups]);
 
   const physicalUnits = useMemo(
@@ -340,9 +340,8 @@ export default function ItemsPage() {
       (selectedModelGroup?.items ?? []).reduce(
         (count, item) =>
           count +
-          (item.inventoryUnits?.filter((unit) =>
-            isAvailableUnit(unit.status),
-          ).length ?? 0),
+          (item.inventoryUnits?.filter((unit) => isAvailableUnit(unit.status))
+            .length ?? 0),
         0,
       ),
     [selectedModelGroup],
@@ -366,7 +365,9 @@ export default function ItemsPage() {
             ...(item.inventoryUnits ?? []).map((unit) => unit.itemCode),
             ...(item.inventoryUnits ?? []).map((unit) => unit.imei),
           ].some((value) =>
-            String(value ?? "").toLowerCase().includes(query),
+            String(value ?? "")
+              .toLowerCase()
+              .includes(query),
           ),
         ),
     );
@@ -493,6 +494,19 @@ export default function ItemsPage() {
                           {group.items.length === 1
                             ? "item record"
                             : "item records"}
+                        </div>
+
+                        <div className="mt-1 truncate text-xs text-indigo-600">
+                          Source Store:{" "}
+                          {Array.from(
+                            new Set(
+                              group.items
+                                .map((item) => item.sourceStoreCode?.trim())
+                                .filter((code): code is string =>
+                                  Boolean(code),
+                                ),
+                            ),
+                          ).join(", ") || "Not specified"}
                         </div>
                       </div>
 
@@ -792,7 +806,11 @@ export default function ItemsPage() {
                                 isSold ? "text-red-600" : "text-slate-800"
                               }`}
                             >
-                              {isSold ? 0 : isAvailableUnit(unit.status) ? 1 : 0}
+                              {isSold
+                                ? 0
+                                : isAvailableUnit(unit.status)
+                                  ? 1
+                                  : 0}
                             </td>
                           </tr>
                         );
@@ -818,7 +836,14 @@ export default function ItemsPage() {
                     {selectedItem.sku || "—"}
                   </div>
                 </div>
-
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Source Store Code
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-indigo-700">
+                    {selectedItem.sourceStoreCode || "Not specified"}
+                  </div>
+                </div>
                 <div>
                   <div className="text-xs text-slate-500">Barcode</div>
                   <div className="mt-1 text-sm font-medium text-slate-800">

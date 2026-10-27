@@ -55,6 +55,7 @@ const nav = [
       { href: "/items", label: "All Items" },
       { href: "/items/stock", label: "Stock Summary" },
       { href: "/items/shelves", label: "Shelves" },
+      { href: "/stock-transfers", label: "Stock Transfers" },
     ],
   },
   { href: "/expenses", label: "Expenses", icon: Wallet },
