@@ -495,14 +495,12 @@ export const api = {
     request<{
       success: boolean;
       data: Array<{
-        invoiceNumber: string;
-        date: string;
         storeCode: string;
         storeName: string;
-        amount: number | string;
-        paidAmount: number | string;
-        balanceAmount: number | string;
-        status: string;
+        invoiceCount: number;
+        totalSales: number | string;
+        totalReceived: number | string;
+        totalOutstanding: number | string;
       }>;
       summary: {
         invoiceCount: number;

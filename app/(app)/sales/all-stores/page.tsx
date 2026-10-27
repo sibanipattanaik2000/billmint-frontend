@@ -14,15 +14,13 @@ import {
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 
-interface StoreSale {
-  invoiceNumber: string;
-  date: string;
+interface StoreSummary {
   storeCode: string;
   storeName: string;
-  amount: number | string;
-  paidAmount: number | string;
-  balanceAmount: number | string;
-  status: string;
+  invoiceCount: number;
+  totalSales: number | string;
+  totalReceived: number | string;
+  totalOutstanding: number | string;
 }
 
 interface SalesSummary {
@@ -58,50 +56,10 @@ function formatCurrency(value: number | string): string {
   })}`;
 }
 
-function formatDate(value: string): string {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function statusStyle(status: string): string {
-  const normalized = status.toUpperCase();
-
-  if (normalized === "CANCELLED") {
-    return "bg-red-50 text-red-700 ring-red-200";
-  }
-
-  if (normalized === "DRAFT") {
-    return "bg-slate-100 text-slate-600 ring-slate-200";
-  }
-
-  if (normalized === "PAID") {
-    return "bg-emerald-50 text-emerald-700 ring-emerald-200";
-  }
-
-  return "bg-amber-50 text-amber-700 ring-amber-200";
-}
-
-function readableStatus(status: string): string {
-  return status
-    .toLowerCase()
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
 export default function AllStoreSalesPage() {
-  const [sales, setSales] = useState<StoreSale[]>([]);
+  const [stores, setStores] = useState<StoreSummary[]>([]);
   const [summary, setSummary] = useState<SalesSummary>(EMPTY_SUMMARY);
+
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
     limit: 20,
@@ -141,8 +99,9 @@ export default function AllStoreSalesPage() {
           to: toDate || undefined,
         });
 
-        setSales(Array.isArray(response.data) ? response.data : []);
+        setStores(Array.isArray(response.data) ? response.data : []);
         setSummary(response.summary ?? EMPTY_SUMMARY);
+
         setPagination(
           response.pagination ?? {
             page,
@@ -152,7 +111,7 @@ export default function AllStoreSalesPage() {
           },
         );
       } catch (err) {
-        setSales([]);
+        setStores([]);
         setSummary(EMPTY_SUMMARY);
         setPagination({
           page,
@@ -204,7 +163,9 @@ export default function AllStoreSalesPage() {
   }
 
   const firstRecord =
-    pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+    pagination.total === 0
+      ? 0
+      : (pagination.page - 1) * pagination.limit + 1;
 
   const lastRecord = Math.min(
     pagination.page * pagination.limit,
@@ -214,20 +175,19 @@ export default function AllStoreSalesPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
-              <Store className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-                All-Store Sales
-              </h1>
-              <p className="mt-1 text-sm text-slate-500">
-                View sales summaries across stores without accessing their
-                private invoice or customer records.
-              </p>
-            </div>
+        <div className="flex items-center gap-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+            <Store className="h-5 w-5" />
+          </div>
+
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              All-Store Sales
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              View aggregated sales performance across stores without
+              exposing individual invoices or customer records.
+            </p>
           </div>
         </div>
 
@@ -265,7 +225,7 @@ export default function AllStoreSalesPage() {
               id="storeCode"
               value={storeCodeInput}
               onChange={(event) => setStoreCodeInput(event.target.value)}
-              placeholder="e.g. STR000001"
+              placeholder="Enter store code"
               maxLength={40}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
             />
@@ -317,6 +277,7 @@ export default function AllStoreSalesPage() {
               <Search className="h-4 w-4" />
               Apply
             </button>
+
             <button
               type="button"
               onClick={clearFilters}
@@ -352,6 +313,7 @@ export default function AllStoreSalesPage() {
           icon={<ReceiptText className="h-5 w-5" />}
           iconClass="bg-blue-50 text-blue-700"
         />
+
         <SummaryCard
           title="Total Sales"
           value={formatCurrency(summary.totalSales)}
@@ -359,6 +321,7 @@ export default function AllStoreSalesPage() {
           icon={<TrendingUp className="h-5 w-5" />}
           iconClass="bg-violet-50 text-violet-700"
         />
+
         <SummaryCard
           title="Total Received"
           value={formatCurrency(summary.totalReceived)}
@@ -366,6 +329,7 @@ export default function AllStoreSalesPage() {
           icon={<Wallet className="h-5 w-5" />}
           iconClass="bg-emerald-50 text-emerald-700"
         />
+
         <SummaryCard
           title="Outstanding"
           value={formatCurrency(summary.totalOutstanding)}
@@ -379,15 +343,16 @@ export default function AllStoreSalesPage() {
         <div className="flex flex-col gap-2 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="font-semibold text-slate-900">
-              Sales across stores
+              Store-wise sales summary
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Summary information only. Invoice and customer details remain
-              private to each store.
+              Each row contains totals for one store. Individual invoices
+              and customer details are not shown.
             </p>
           </div>
+
           <span className="text-sm text-slate-500">
-            {pagination.total.toLocaleString("en-IN")} records
+            {pagination.total.toLocaleString("en-IN")} stores
           </span>
         </div>
 
@@ -395,82 +360,80 @@ export default function AllStoreSalesPage() {
           <div className="flex min-h-64 items-center justify-center">
             <div className="flex items-center gap-3 text-sm text-slate-500">
               <RefreshCw className="h-4 w-4 animate-spin" />
-              Loading sales summaries...
+              Loading store summaries...
             </div>
           </div>
-        ) : sales.length === 0 ? (
+        ) : stores.length === 0 ? (
           <div className="flex min-h-64 flex-col items-center justify-center px-6 text-center">
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500">
               <ReceiptText className="h-6 w-6" />
             </div>
-            <h3 className="font-semibold text-slate-800">No sales found</h3>
+            <h3 className="font-semibold text-slate-800">
+              No store summaries found
+            </h3>
             <p className="mt-1 max-w-md text-sm text-slate-500">
-              There are no matching sales for these filters, or the stores
-              have not recorded any sales yet.
+              No matching stores have recorded sales for the selected
+              filters.
             </p>
           </div>
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left text-sm">
+              <table className="w-full min-w-[800px] text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-5 py-3 font-semibold">Date</th>
                     <th className="px-5 py-3 font-semibold">Store</th>
                     <th className="px-5 py-3 font-semibold">Store Code</th>
-                    <th className="px-5 py-3 font-semibold">Invoice No.</th>
                     <th className="px-5 py-3 text-right font-semibold">
-                      Sale Amount
+                      Invoices
+                    </th>
+                    <th className="px-5 py-3 text-right font-semibold">
+                      Total Sales
                     </th>
                     <th className="px-5 py-3 text-right font-semibold">
                       Received
                     </th>
                     <th className="px-5 py-3 text-right font-semibold">
-                      Balance
+                      Outstanding
                     </th>
-                    <th className="px-5 py-3 font-semibold">Status</th>
                   </tr>
                 </thead>
+
                 <tbody className="divide-y divide-slate-100">
-                  {sales.map((sale, index) => (
+                  {stores.map((store) => (
                     <tr
-                      key={`${sale.storeCode}-${sale.invoiceNumber}-${sale.date}-${index}`}
+                      key={store.storeCode}
                       className="transition hover:bg-slate-50"
                     >
-                      <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                        {formatDate(sale.date)}
-                      </td>
                       <td className="px-5 py-4">
                         <div className="font-medium text-slate-900">
-                          {sale.storeName || "Unnamed Store"}
+                          {store.storeName || "Unnamed Store"}
                         </div>
                         <div className="mt-0.5 text-xs text-slate-500">
-                          Selling store
+                          Aggregated store totals
                         </div>
                       </td>
+
                       <td className="whitespace-nowrap px-5 py-4">
                         <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-semibold text-slate-700">
-                          {sale.storeCode || "—"}
+                          {store.storeCode || "—"}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap px-5 py-4 font-medium text-slate-800">
-                        {sale.invoiceNumber || "—"}
+
+                      <td className="whitespace-nowrap px-5 py-4 text-right font-medium tabular-nums text-slate-800">
+                        {store.invoiceCount.toLocaleString("en-IN")}
                       </td>
+
                       <td className="whitespace-nowrap px-5 py-4 text-right font-semibold tabular-nums text-slate-900">
-                        {formatCurrency(sale.amount)}
+                        {formatCurrency(store.totalSales)}
                       </td>
+
                       <td className="whitespace-nowrap px-5 py-4 text-right tabular-nums text-emerald-700">
-                        {formatCurrency(sale.paidAmount)}
+                        {formatCurrency(store.totalReceived)}
                       </td>
+
                       <td className="whitespace-nowrap px-5 py-4 text-right tabular-nums text-slate-700">
-                        {formatCurrency(sale.balanceAmount)}
-                      </td>
-                      <td className="whitespace-nowrap px-5 py-4">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${statusStyle(sale.status)}`}
-                        >
-                          {readableStatus(sale.status)}
-                        </span>
+                        {formatCurrency(store.totalOutstanding)}
                       </td>
                     </tr>
                   ))}
@@ -487,22 +450,28 @@ export default function AllStoreSalesPage() {
                 of{" "}
                 <span className="font-medium text-slate-700">
                   {pagination.total}
-                </span>
+                </span>{" "}
+                stores
               </p>
 
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  onClick={() =>
+                    setPage((current) => Math.max(1, current - 1))
+                  }
                   disabled={page <= 1 || loading}
                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <ChevronLeft className="h-4 w-4" />
                   Previous
                 </button>
+
                 <span className="min-w-20 text-center text-sm text-slate-600">
-                  Page {pagination.page} of {Math.max(1, pagination.totalPages)}
+                  Page {pagination.page} of{" "}
+                  {Math.max(1, pagination.totalPages)}
                 </span>
+
                 <button
                   type="button"
                   onClick={() =>
@@ -555,6 +524,7 @@ function SummaryCard({
           </p>
           <p className="mt-1 text-xs text-slate-500">{subtitle}</p>
         </div>
+
         <div
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconClass}`}
         >

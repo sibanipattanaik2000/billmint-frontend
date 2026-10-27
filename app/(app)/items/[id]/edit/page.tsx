@@ -18,6 +18,11 @@ import {
 } from "lucide-react";
 import { ApiError, api, formatINR } from "@/lib/api";
 
+interface StoreOption {
+  storeCode: string;
+  name: string;
+}
+
 interface Item {
   id: string;
 
@@ -30,7 +35,7 @@ interface Item {
   categoryId?: string | null;
   brandId?: string | null;
   unitId?: string | null;
-
+  sourceStoreCode?: string | null;
   description?: string | null;
 
   purchasePrice?: number | string | null;
@@ -98,7 +103,7 @@ interface FormState {
   barcode: string;
   imei: string;
   hsnSac: string;
-
+  sourceStoreCode: string;
   description: string;
 
   salePrice: string;
@@ -297,6 +302,30 @@ export default function EditItemPage() {
 
   const [reloadKey, setReloadKey] = useState(0);
 
+  const [stores, setStores] = useState<StoreOption[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStores() {
+      try {
+        const response = await api.stores();
+
+        if (!cancelled) {
+          setStores(response.data);
+        }
+      } catch (err) {
+        console.error("Unable to load stores:", err);
+      }
+    }
+
+    void loadStores();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /* =========================================================
      LOAD ITEM
   ========================================================= */
@@ -330,7 +359,10 @@ export default function EditItemPage() {
 
           barcode: nextItem.barcode || "",
 
+          sourceStoreCode: nextItem.sourceStoreCode || "",
+
           imei: nextItem.imei || "",
+
           hsnSac: nextItem.hsnSac || "",
 
           description: nextItem.description || "",
@@ -496,7 +528,7 @@ export default function EditItemPage() {
     try {
       await api.updateItem(id, {
         name: form.name.trim(),
-
+        sourceStoreCode: form.sourceStoreCode || null,
         sku: form.sku.trim() || null,
 
         barcode: form.barcode.trim() || null,
@@ -813,7 +845,23 @@ export default function EditItemPage() {
                     placeholder="Enter item name"
                   />
                 </Field>
+                <Field
+                  label="Source Store"
+                  description="The store where this item originally came from. This does not transfer stock ownership."
+                >
+                  <Select
+                    value={form.sourceStoreCode}
+                    onChange={(value) => updateForm("sourceStoreCode", value)}
+                  >
+                    <option value="">Not specified</option>
 
+                    {stores.map((store) => (
+                      <option key={store.storeCode} value={store.storeCode}>
+                        {store.storeCode} — {store.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
                 <Field label="Item Code / SKU">
                   <Input
                     value={form.sku}
