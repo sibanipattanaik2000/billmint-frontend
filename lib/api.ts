@@ -179,7 +179,76 @@ export const api = {
     }),
 
   me: () => request<ApiSuccess<any>>("/auth/me"),
+  /* =======================================================
+     MULTI-COMPANY ACCESS
+  ======================================================= */
 
+  myBusinesses: () =>
+    request<
+      ApiSuccess<
+        Array<{
+          membershipId: string;
+          businessId: string;
+          name: string;
+          storeCode: string;
+          city: string | null;
+          state: string | null;
+          gstin: string | null;
+          setupCompleted: boolean;
+          role: string;
+          isOwner: boolean;
+          isActive: boolean;
+        }>
+      >
+    >("/business-access/list"),
+  switchBusiness: (businessId: string) =>
+    request<
+      ApiSuccess<{
+        business: {
+          id: string;
+          name: string;
+          storeCode: string;
+          city: string | null;
+          state: string | null;
+          gstin: string | null;
+          setupCompleted: boolean;
+          role: string;
+          isOwner: boolean;
+        };
+      }>
+    >("/business-access/switch", {
+      method: "POST",
+      body: JSON.stringify({ businessId }),
+    }),
+
+  createBusiness: (data: {
+    businessName: string;
+    businessType?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    pinCode?: string;
+    country?: string;
+    gstin?: string;
+    pan?: string;
+  }) =>
+    request<
+      ApiSuccess<{
+        business: {
+          id: string;
+          name: string;
+          storeCode: string;
+          setupCompleted: boolean;
+          role: string;
+          isOwner: boolean;
+        };
+      }>
+    >("/business-access", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   /* =======================================================
      BUSINESS SETTINGS
   ======================================================= */
@@ -205,6 +274,7 @@ export const api = {
           signatureUrl: string | null;
           updatedAt: string;
           storeCode: string;
+          sourceCodePrefix: string | null;
         };
         settings: {
           invoicePrefix: string;
@@ -358,8 +428,7 @@ export const api = {
       }),
     }),
 
-  stockTransfers: () =>
-    request<ApiSuccess<any[]>>("/stock-transfers"),
+  stockTransfers: () => request<ApiSuccess<any[]>>("/stock-transfers"),
 
   createStockTransfer: (data: {
     toStoreCode: string;

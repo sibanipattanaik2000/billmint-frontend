@@ -16,6 +16,7 @@ type SettingsData = {
     state: string | null;
     financialYearStart: number;
     storeCode: string;
+    sourceCodePrefix: string | null;
   };
   settings: {
     invoicePrefix: string;
@@ -81,10 +82,13 @@ export default function SettingsPage() {
         throw new Error("The server returned an invalid settings response.");
       }
 
-      setData({
-        business: response.data.business,
-        settings: response.data.settings,
-      });
+     setData({
+  business: {
+    ...response.data.business,
+    sourceCodePrefix: response.data.business.sourceCodePrefix ?? null,
+  },
+  settings: response.data.settings,
+});
     } catch (err) {
       setError(
         err instanceof Error
@@ -149,7 +153,10 @@ export default function SettingsPage() {
           city: emptyToNull(business.city ?? ""),
           state: emptyToNull(business.state ?? ""),
           financialYearStart: Number(business.financialYearStart),
-         // storeCode: business.storeCode.trim().toUpperCase(),
+          sourceCodePrefix: emptyToNull(
+            business.sourceCodePrefix ?? "",
+          )?.toUpperCase(),
+          // storeCode: business.storeCode.trim().toUpperCase(),
         },
         settings: {
           invoicePrefix: settings.invoicePrefix.trim(),
@@ -319,6 +326,27 @@ export default function SettingsPage() {
                   <p className="mt-1 text-xs text-gray-500">
                     This unique code identifies your store and is used during
                     login.
+                  </p>
+                </div>
+                <div>
+                  <label className={labelClass}>Item Source Code Prefix</label>
+                  <input
+                    className={inputClass}
+                    type="text"
+                    value={business.sourceCodePrefix ?? ""}
+                    placeholder="Example: SBBB"
+                    maxLength={20}
+                    onChange={(e) =>
+                      updateBusiness(
+                        "sourceCodePrefix",
+                        e.target.value.toUpperCase(),
+                      )
+                    }
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Enter your existing item source prefix, such as SBBB or
+                    SVVV. Item source numbers are entered manually or imported.
+                    BillMint will not generate them.
                   </p>
                 </div>
                 {field("Company Name", business.name, (v) =>
