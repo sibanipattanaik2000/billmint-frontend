@@ -968,7 +968,7 @@ export default function SaleInvoicesPage() {
 
   const handleViewInvoice = (invoice: SaleInvoice) => {
     setOpenMenuId(null);
-    router.push(`/sales/${encodeURIComponent(invoice.id)}`);
+    //router.push(`/sales/${encodeURIComponent(invoice.id)}`);
   };
 
   const handleEditInvoice = async (invoice: SaleInvoice) => {
