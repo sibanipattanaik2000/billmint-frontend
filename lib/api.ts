@@ -386,7 +386,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-
+  bulkCreateItems: (items: Record<string, any>[]) =>
+    request<
+      ApiSuccess<{
+        created: number;
+        failed: number;
+        results: Array<{
+          row: number;
+          success: boolean;
+          message?: string;
+        }>;
+      }>
+    >("/items/bulk", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    }),
+    
   updateItem: (id: string, data: Record<string, any>) =>
     request<ApiSuccess<any>>(`/items/${id}`, {
       method: "PATCH",

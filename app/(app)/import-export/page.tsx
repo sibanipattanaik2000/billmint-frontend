@@ -161,7 +161,11 @@ function parseCsv(input: string): string[][] {
 }
 
 function normalizeHeader(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.:]+$/g, "");
 }
 
 /**
@@ -179,7 +183,7 @@ function spreadsheetCellToString(
   const text = String(value).trim();
   const normalizedHeader = normalizeHeader(header);
 
-  const isImeiColumn = ["imei", "imei number", "imei num"].includes(
+  const isImeiColumn = ["imei", "imei number", "imei num", "imei no"].includes(
     normalizedHeader,
   );
 
@@ -275,20 +279,18 @@ function parseBoolean(
 
 function getField(row: CsvRow, name: string): string {
   const normalized = normalizeHeader(name);
-  const direct = row[normalized];
-
-  if (direct !== undefined) return direct;
 
   const aliases: Record<string, string[]> = {
     name: ["item name", "name of mobile"],
-    sku: ["item code"],
-    imei: ["imei number", "imei num"],
+    imei: ["imei number", "imei num", "imei no"],
     "opening stock": ["quantity"],
   };
 
+  const direct = row[normalized];
+  if (direct !== undefined) return direct;
+
   for (const alias of aliases[normalized] ?? []) {
-    const value = row[alias];
-    if (value !== undefined) return value;
+    if (row[alias] !== undefined) return row[alias];
   }
 
   return "";
@@ -309,13 +311,14 @@ function isThreeFieldItemRow(row: CsvRow): boolean {
     row["item name"] !== undefined ||
     row["name of mobile"] !== undefined;
 
-  const hasItemCode = "item code" in row;
+  const hasImeiHeader =
+    row.imei !== undefined ||
+    row["imei number"] !== undefined ||
+    row["imei num"] !== undefined ||
+    row["imei no"] !== undefined;
 
-  const hasImei = "imei" in row || "imei number" in row || "imei num" in row;
-
-  return hasName && hasItemCode && hasImei;
+  return hasName && hasImeiHeader;
 }
-
 function getItemOpeningStock(row: CsvRow): number {
   return (
     optionalNumber(row, "Opening Stock") ?? optionalNumber(row, "Quantity") ?? 0
@@ -443,96 +446,28 @@ function ensureSupportedImport(module: ModuleType): void {
 
 function validateItemRows(rows: CsvRow[]): string[] {
   const errors: string[] = [];
-  const seenSku = new Set<string>();
-  const seenBarcode = new Set<string>();
   const seenImei = new Set<string>();
 
   rows.forEach((row, index) => {
     const rowNumber = index + 2;
 
     try {
-      const minimalFormat = isThreeFieldItemRow(row);
-
-      const name = getItemField(row, "Name");
-      if (!name) throw new Error("Name is required.");
-
-      const sku = optionalValue(getItemField(row, "SKU"));
-      const barcode = optionalValue(getItemField(row, "Barcode"));
+      const name = getItemField(row, "Name").trim();
       const imei = optionalValue(getItemField(row, "IMEI"));
 
-      if (minimalFormat && !sku) {
-        throw new Error("Item Code is required.");
+      if (!name) {
+        throw new Error("Name is required.");
       }
 
-      if (minimalFormat && !imei) {
-        throw new Error("IMEI is required.");
+      if (imei && !/^\d{15}$/.test(imei)) {
+        throw new Error("IMEI must contain exactly 15 digits.");
       }
 
-      const openingStock = minimalFormat ? 1 : getItemOpeningStock(row);
-
-      const purchasePrice = optionalNumber(row, "Purchase Price") ?? 0;
-
-      const salePrice = optionalNumber(row, "Sale Price") ?? 0;
-
-      const mrp = optionalNumber(row, "MRP");
-
-      const minimumStock = optionalNumber(row, "Minimum Stock") ?? 0;
-
-      const gstRate = optionalNumber(row, "GST Rate") ?? 18;
-
-      const discountPercent = optionalNumber(row, "Discount Percent") ?? 0;
-
-      const trackSerial = minimalFormat ? true : getItemTrackSerial(row, imei);
-
-      if (
-        purchasePrice < 0 ||
-        salePrice < 0 ||
-        (mrp !== undefined && mrp < 0) ||
-        openingStock < 0 ||
-        minimumStock < 0
-      ) {
-        throw new Error("Prices and stock cannot be negative.");
+      if (imei && seenImei.has(imei)) {
+        throw new Error(`Duplicate IMEI "${imei}" in this file.`);
       }
 
-      if (gstRate < 0 || gstRate > 100) {
-        throw new Error("GST Rate must be between 0 and 100.");
-      }
-
-      if (discountPercent < 0 || discountPercent > 100) {
-        throw new Error("Discount Percent must be between 0 and 100.");
-      }
-
-      if (trackSerial) {
-        if (!imei || !/^\d{15}$/.test(imei)) {
-          throw new Error(
-            "Track Serial requires an IMEI containing exactly 15 digits.",
-          );
-        }
-
-        if (openingStock > 1) {
-          throw new Error(
-            "A serialized item can have maximum opening stock of 1. Each individual IMEI represents one physical device.",
-          );
-        }
-      } else if (imei) {
-        throw new Error("Provide an IMEI only when Track Serial is Yes.");
-      }
-
-      const identifiers: Array<[string | undefined, Set<string>, string]> = [
-        [sku, seenSku, "SKU"],
-        [barcode, seenBarcode, "Barcode"],
-        [imei, seenImei, "IMEI"],
-      ];
-
-      for (const [value, seen, label] of identifiers) {
-        if (!value) continue;
-
-        if (seen.has(value)) {
-          throw new Error(`Duplicate ${label} "${value}" in this file.`);
-        }
-
-        seen.add(value);
-      }
+      if (imei) seenImei.add(imei);
     } catch (error) {
       errors.push(
         `Row ${rowNumber}: ${
@@ -558,6 +493,67 @@ async function importRows(
     failedRows: [],
   };
 
+  // ITEMS: Send the entire spreadsheet in ONE HTTP request.
+  if (module === "items") {
+    const items: Record<string, any>[] = [];
+
+    rows.forEach((row, index) => {
+      const name = getItemField(row, "Name").trim();
+      const imei = optionalValue(getItemField(row, "IMEI"));
+
+      items.push({
+        name,
+
+        // ITEM CODE is intentionally ignored.
+        // No SKU, device code or barcode is generated.
+
+        imei: imei ?? undefined,
+
+        modelName: name,
+
+        // One spreadsheet row represents one physical item.
+        openingStock: 1,
+
+        purchasePrice: 0,
+        salePrice: 0,
+        mrp: null,
+        minimumStock: 0,
+        gstRate: 18,
+        discountPercent: 0,
+
+        trackBatch: false,
+        trackSerial: Boolean(imei),
+        trackExpiry: false,
+      });
+    });
+
+    const response = await api.bulkCreateItems(items);
+    const bulkResult = response.data;
+
+    result.created = bulkResult.created;
+    result.failed = bulkResult.failed;
+
+    const failedIndexes = new Set<number>();
+
+    bulkResult.results.forEach((entry) => {
+      if (!entry.success) {
+        const originalIndex = entry.row - 2;
+
+        if (originalIndex >= 0 && originalIndex < rows.length) {
+          failedIndexes.add(originalIndex);
+          result.failedRows.push(rows[originalIndex]);
+        }
+
+        result.errors.push(
+          `Row ${entry.row}: ${entry.message || "Item creation failed."}`,
+        );
+      }
+    });
+
+    return result;
+  }
+
+  // Other import modules retain their existing individual workflows.
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -593,94 +589,6 @@ async function importRows(
         } else {
           await api.createSupplier(common);
         }
-      } else if (module === "items") {
-        const minimalFormat = isThreeFieldItemRow(row);
-
-        const name = getItemField(row, "Name");
-        if (!name) throw new Error("Name is required.");
-
-        const imei = optionalValue(getItemField(row, "IMEI"));
-
-        const trackSerial = minimalFormat
-          ? true
-          : getItemTrackSerial(row, imei);
-
-        const payload = {
-          name,
-
-          // Item Code is stored in the existing SKU field.
-          sku: optionalValue(getItemField(row, "SKU")),
-
-          barcode: optionalValue(getItemField(row, "Barcode")),
-          imei,
-
-          // Each simplified-format row represents one device.
-          openingStock: minimalFormat ? 1 : getItemOpeningStock(row),
-
-          modelName: optionalValue(getItemField(row, "Model Name")) ?? name,
-
-          categoryId: optionalValue(getField(row, "Category ID")),
-          brandId: optionalValue(getField(row, "Brand ID")),
-          unitId: optionalValue(getField(row, "Unit ID")),
-          supplierId: optionalValue(getField(row, "Supplier ID")),
-          description: optionalValue(getField(row, "Description")),
-
-          purchasePrice: optionalNumber(row, "Purchase Price") ?? 0,
-
-          salePrice: optionalNumber(row, "Sale Price") ?? 0,
-
-          mrp: optionalNumber(row, "MRP") ?? null,
-
-          minimumStock: optionalNumber(row, "Minimum Stock") ?? 0,
-
-          gstRate: optionalNumber(row, "GST Rate") ?? 18,
-
-          hsnSac: optionalValue(getField(row, "HSN/SAC")),
-
-          discountPercent: optionalNumber(row, "Discount Percent") ?? 0,
-
-          trackBatch: parseBoolean(getField(row, "Track Batch")),
-          trackSerial,
-          trackExpiry: parseBoolean(getField(row, "Track Expiry")),
-
-          deviceCode: optionalValue(getField(row, "Device Code")),
-        };
-
-        if (
-          payload.purchasePrice < 0 ||
-          payload.salePrice < 0 ||
-          (payload.mrp !== null && payload.mrp < 0) ||
-          payload.openingStock < 0 ||
-          payload.minimumStock < 0
-        ) {
-          throw new Error("Prices and stock cannot be negative.");
-        }
-
-        if (payload.gstRate < 0 || payload.gstRate > 100) {
-          throw new Error("GST Rate must be between 0 and 100.");
-        }
-
-        if (payload.discountPercent < 0 || payload.discountPercent > 100) {
-          throw new Error("Discount Percent must be between 0 and 100.");
-        }
-
-        if (trackSerial) {
-          if (!imei || !/^\d{15}$/.test(imei)) {
-            throw new Error(
-              "Track Serial requires an IMEI containing exactly 15 digits.",
-            );
-          }
-
-          if (payload.openingStock > 1) {
-            throw new Error(
-              "A serialized item can have maximum opening stock of 1.",
-            );
-          }
-        } else if (imei) {
-          throw new Error("Provide an IMEI only when Track Serial is Yes.");
-        }
-
-        await api.createItem(payload);
       } else if (module === "expenses") {
         const amount = requiredNumber(row, "Amount");
 
@@ -706,11 +614,12 @@ async function importRows(
         });
       }
 
-      result.created += 1;
+      result.created++;
     } catch (error) {
-      result.failed += 1;
+      result.failed++;
 
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message =
+        error instanceof Error ? error.message : "Unknown error";
 
       result.errors.push(`Row ${rowNumber}: ${message}`);
       result.failedRows.push(row);
@@ -1036,6 +945,7 @@ export default function ImportExportPage() {
       const itemHeaders = new Set([
         "name",
         "name of mobile",
+        "imei no",
         "sku",
         "barcode",
         "model name",
@@ -1091,6 +1001,7 @@ export default function ImportExportPage() {
       const itemHeaderAliases = new Set([
         "item name",
         "name of mobile",
+        "imei no",
         "item code",
         "imei number",
         "imei num",

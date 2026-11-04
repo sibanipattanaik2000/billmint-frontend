@@ -384,59 +384,55 @@ export default function SaleInvoicesPage() {
 
   const handleRowPrint = async (invoice: SaleInvoice) => {
     try {
-      // Fetch the complete, real sale record from the backend.
       const response = await api.sale(invoice.id);
       const sale = response?.data as any;
-      const businessResponse = await api.businessSettings();
-      const issuingBusiness = businessResponse.data.business;
-      const invoiceSettings = businessResponse.data.settings;
+
       if (!sale) {
-        alert("Unable to fetch the complete invoice details.");
+        alert("Unable to fetch invoice details.");
         return;
       }
 
       const esc = (value: unknown): string =>
-        escapeHtml(value == null || value === "" ? "—" : String(value));
+        escapeHtml(value == null || value === "" ? "" : String(value));
 
-      // New invoices use the seller details saved at sale creation.
-      // Existing invoices fall back to the current business profile.
-      const seller = {
-        name: sale.sellerBusinessName || issuingBusiness.name || "BillMint",
-        address: [
-          sale.sellerAddress ?? issuingBusiness.address,
-          sale.sellerCity ?? issuingBusiness.city,
-          sale.sellerState ?? issuingBusiness.state,
-          sale.sellerPinCode ?? issuingBusiness.pinCode,
-        ]
-          .filter(Boolean)
-          .join(", "),
-        phone: sale.sellerPhone ?? issuingBusiness.phone ?? "",
-        email: sale.sellerEmail ?? issuingBusiness.email ?? "",
-        gstin: sale.sellerGstin ?? issuingBusiness.gstin ?? "",
-        storeCode: sale.sellerStoreCode ?? issuingBusiness.storeCode ?? "",
-        logoUrl: sale.sellerLogoUrl ?? issuingBusiness.logoUrl ?? "",
+      const money = (value: unknown): string => formatINR(toNumber(value));
+
+      // FIXED SUREBUY STORE DETAILS.
+      // Fill these with the exact details printed on your reference PDF.
+      const SUREBUY = {
+        name: "SUREBUY STORE",
+        address: "SIRIPUR SQUARE NEAR MIO AMORE CAKE SHOP ",
+        city: "BHUBANESWAR",
+        state: "ODISHA",
+        pinCode: "751003",
+        phone: "7853976501 ,8079978830",
+        email: "surebuy178@gmail.com",
+        logo: "/surebuy-logo.png",
+        terms: ["ENTER THE EXACT TERMS AND CONDITIONS FROM YOUR SUREBUY PDF"],
       };
 
-      const issuingStoreName = esc(seller.name);
-      const issuingStoreAddress = esc(seller.address);
-      const issuingStorePhone = esc(seller.phone);
-      const issuingStoreEmail = esc(seller.email);
-      const issuingStoreGstin = esc(seller.gstin);
-      const issuingStoreCode = esc(seller.storeCode);
-      const termsText =
-        invoiceSettings.termsAndConditions?.trim() ||
-        "Goods once sold are subject to the seller's stated return and replacement policy.";
+      const customer = sale.customer ?? {};
+      const customerName = customer.name || "Walk-in Customer";
+      const customerAddress =
+        customer.address || customer.billingAddress || customer.city || "";
 
-      const termsHtml = termsText
-        .split(/\\r?\\n/)
-        .map((line: string) => `<p>${esc(line)}</p>`)
-        .join("");
-      const money = (value: unknown): string =>
-        formatINR(toNumber(value)).replace(/^₹\s?/, "");
+      const customerPhone = customer.phone || customer.mobile || "";
+
+      const items: any[] = Array.isArray(sale.items)
+        ? sale.items
+        : Array.isArray(sale.saleItems)
+          ? sale.saleItems
+          : [];
+
+      if (!items.length) {
+        alert("No item details found for this invoice.");
+        return;
+      }
 
       const dateValue = sale.date ? new Date(sale.date) : new Date();
+
       const invoiceDate = Number.isNaN(dateValue.getTime())
-        ? esc(invoice.date)
+        ? ""
         : dateValue.toLocaleDateString("en-GB");
 
       const invoiceTime = Number.isNaN(dateValue.getTime())
@@ -446,107 +442,9 @@ export default function SaleInvoicesPage() {
             minute: "2-digit",
           });
 
-      const invoiceNumber = esc(sale.invoiceNumber ?? invoice.invoiceNo);
-      const customerName = esc(
-        sale.customer?.name ?? invoice.partyName ?? "Walk-in Customer",
-      );
+      const invoiceNumber = sale.invoiceNumber ?? invoice.invoiceNo;
 
-      const customerAddress = esc(
-        sale.customer?.address ??
-          sale.customer?.billingAddress ??
-          sale.customer?.city ??
-          "",
-      );
-
-      const customerPhone = esc(
-        sale.customer?.phone ?? sale.customer?.mobile ?? "",
-      );
-
-      const items: any[] = Array.isArray(sale.items)
-        ? sale.items
-        : Array.isArray(sale.saleItems)
-          ? sale.saleItems
-          : [];
-
-      if (items.length === 0) {
-        alert(
-          "This sale record has no item details. Please check the sale details API before printing.",
-        );
-        return;
-      }
-
-      const itemRows = items
-        .map((item: any, index: number) => {
-          const product = item.item ?? item.product ?? {};
-          const sourceStoreCode = String(
-            item.sourceStoreCode ?? product.sourceStoreCode ?? "",
-          ).trim();
-          const inventoryUnit =
-            item.inventoryUnit ?? item.inventoryUnits?.[0] ?? {};
-
-          const itemName =
-            item.itemName ??
-            item.name ??
-            product.name ??
-            product.modelName ??
-            "Item";
-
-          const itemCode =
-            item.itemCode ?? item.sku ?? product.itemCode ?? product.sku ?? "";
-
-          const imei =
-            item.imei ??
-            item.serialNumber ??
-            inventoryUnit.imei ??
-            inventoryUnit.serialNumber ??
-            "";
-
-          const quantity = toNumber(item.quantity) || 1;
-          const rate = toNumber(
-            item.rate ?? item.unitPrice ?? item.price ?? item.sellingPrice,
-          );
-          const amount =
-            toNumber(item.amount ?? item.total ?? item.lineTotal) ||
-            quantity * rate;
-
-          return `
-          <tr>
-            <td class="number">${index + 1}</td>
-            <td class="item-name">
-              <strong>${esc(itemName)}</strong>
-              ${
-                sourceStoreCode
-                  ? `<div class="subline">Source Store: ${esc(sourceStoreCode)}</div>`
-                  : ""
-              }
-              ${itemCode ? `<div class="subline">ITEM CODE: ${esc(itemCode)}</div>` : ""}
-              ${imei ? `<div class="subline">IMEI: ${esc(imei)}</div>` : ""}
-            </td>
-            <td class="center">${quantity}</td>
-            <td class="right">₹ ${money(rate)}</td>
-            <td class="right">₹ ${money(amount)}</td>
-            <td>${esc(itemCode)}</td>
-          </tr>
-        `;
-        })
-        .join("");
-
-      const quantityTotal = items.reduce(
-        (sum: number, item: any) => sum + (toNumber(item.quantity) || 1),
-        0,
-      );
-
-      const subtotal = toNumber(sale.subtotal ?? sale.grandTotal);
-      const total = toNumber(sale.grandTotal ?? sale.totalAmount);
-      const received = toNumber(sale.paidAmount);
-      const balance = Math.max(
-        0,
-        toNumber(sale.balanceAmount ?? total - received),
-      );
-
-      const amountInWords = (amount: number): string => {
-        if (amount === 0) return "Zero Rupees only";
-
+      const getAmountInWords = (amount: number): string => {
         const ones = [
           "",
           "One",
@@ -569,6 +467,7 @@ export default function SaleInvoicesPage() {
           "Eighteen",
           "Nineteen",
         ];
+
         const tens = [
           "",
           "",
@@ -584,19 +483,25 @@ export default function SaleInvoicesPage() {
 
         const underThousand = (n: number): string => {
           let result = "";
+
           if (n >= 100) {
             result += `${ones[Math.floor(n / 100)]} Hundred `;
             n %= 100;
           }
+
           if (n >= 20) {
             result += `${tens[Math.floor(n / 10)]} `;
             n %= 10;
           }
+
           if (n > 0) result += `${ones[n]} `;
+
           return result.trim();
         };
 
         let n = Math.floor(Math.abs(amount));
+        if (n === 0) return "Zero Rupees Only";
+
         const parts: string[] = [];
 
         const crore = Math.floor(n / 10000000);
@@ -619,32 +524,97 @@ export default function SaleInvoicesPage() {
 
         if (n) parts.push(underThousand(n));
 
-        return `${parts.join(" ")} Rupees only`;
+        return `${parts.join(" ")} Rupees Only`;
       };
 
-      const paymentMode = esc(
-        String(sale.paymentMethod ?? invoice.paymentType ?? "Credit")
-          .replaceAll("_", " ")
-          .replaceAll("-", " "),
+      const itemRows = items
+        .map((item: any, index: number) => {
+          const product = item.item ?? item.product ?? {};
+          const unit = item.inventoryUnit ?? item.inventoryUnits?.[0] ?? {};
+
+          const name =
+            item.itemName ??
+            item.name ??
+            product.name ??
+            product.modelName ??
+            "Item";
+
+          const itemCode =
+            item.itemCode ??
+            item.sku ??
+            product.deviceCode ??
+            product.sku ??
+            "";
+
+          const quantity = toNumber(item.quantity) || 1;
+
+          const rate = toNumber(
+            item.rate ?? item.unitPrice ?? item.price ?? item.sellingPrice,
+          );
+
+          const amount =
+            toNumber(item.amount ?? item.total ?? item.lineTotal) ||
+            quantity * rate;
+
+          return `
+        <tr>
+          <td class="center">${index + 1}</td>
+          <td>
+            <strong>${esc(name)}</strong>
+            ${
+              itemCode
+                ? `<div class="item-code">ITEM CODE: ${esc(itemCode)}</div>`
+                : ""
+            }
+          </td>
+          <td class="center">${quantity}</td>
+          <td class="right">₹ ${money(rate)}</td>
+          <td class="right">₹ ${money(amount)}</td>
+          <td>${esc(itemCode)}</td>
+        </tr>
+      `;
+        })
+        .join("");
+
+      const quantityTotal = items.reduce(
+        (sum: number, item: any) => sum + (toNumber(item.quantity) || 1),
+        0,
       );
+
+      const subtotal = toNumber(sale.subtotal ?? sale.grandTotal);
+      const total = toNumber(sale.grandTotal ?? sale.totalAmount);
+      const received = toNumber(sale.paidAmount);
+      const balance = Math.max(
+        0,
+        toNumber(sale.balanceAmount ?? total - received),
+      );
+
+      const paymentMode = String(
+        sale.paymentMethod ?? invoice.paymentType ?? "Credit",
+      )
+        .replaceAll("_", " ")
+        .replaceAll("-", " ")
+        .toUpperCase();
 
       const printWindow = window.open("", "_blank", "width=1000,height=800");
 
       if (!printWindow) {
-        alert("Please allow pop-ups in your browser to print the invoice.");
+        alert("Please allow pop-ups to print the invoice.");
         return;
       }
 
       printWindow.document.open();
+
       printWindow.document.write(`
       <!DOCTYPE html>
       <html lang="en">
       <head>
-        <meta charset="UTF-8" />
-        <title>Surebuy Invoice ${invoiceNumber}</title>
+        <meta charset="UTF-8">
+        <title>SureBuy Invoice ${esc(invoiceNumber)}</title>
+
         <style>
           @page {
-            size: A4;
+            size: A4 portrait;
             margin: 12mm 14mm;
           }
 
@@ -654,22 +624,28 @@ export default function SaleInvoicesPage() {
 
           body {
             margin: 0;
+            padding: 0;
+            background: white;
             color: #111;
-            background: #fff;
             font-family: Arial, Helvetica, sans-serif;
             font-size: 12px;
           }
 
-          .invoice-header {
+          .invoice {
+            width: 100%;
+          }
+
+          .header {
             position: relative;
+            min-height: 105px;
+            padding: 4px 105px 12px 5px;
             border-bottom: 1px solid #555;
-            padding: 0 6px 6px;
           }
 
           .store-name {
-            font-size: 18px;
+            font-size: 19px;
             font-weight: 700;
-            margin-bottom: 5px;
+            margin-bottom: 7px;
           }
 
           .store-line {
@@ -679,10 +655,10 @@ export default function SaleInvoicesPage() {
 
           .logo {
             position: absolute;
-            right: 15px;
-            top: 16px;
-            width: 65px;
-            max-height: 55px;
+            right: 12px;
+            top: 7px;
+            width: 85px;
+            height: 80px;
             object-fit: contain;
           }
 
@@ -690,30 +666,30 @@ export default function SaleInvoicesPage() {
             text-align: center;
             font-size: 23px;
             font-weight: 700;
-            margin: 15px 0 22px;
+            margin: 17px 0 23px;
           }
 
           .billing {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 18px;
-            margin: 0 4px 12px;
+            gap: 20px;
+            margin: 0 4px 18px;
           }
 
-          .section-heading {
-            font-size: 13px;
+          .heading {
             font-weight: 700;
+            font-size: 13px;
             margin-bottom: 10px;
           }
 
           .customer-name {
-            font-size: 13px;
             font-weight: 700;
-            margin-bottom: 8px;
+            font-size: 13px;
+            margin-bottom: 7px;
           }
 
           .customer-line {
-            line-height: 19px;
+            line-height: 20px;
           }
 
           .invoice-meta {
@@ -737,33 +713,30 @@ export default function SaleInvoicesPage() {
 
           th {
             text-align: left;
-            padding: 6px 4px;
             font-size: 12px;
-            font-weight: 700;
+            padding: 8px 5px;
           }
 
           td {
-            padding: 7px 4px;
+            padding: 9px 5px;
             vertical-align: top;
             overflow-wrap: anywhere;
           }
 
-          .number { width: 5%; }
-          .item-name { width: 39%; }
-          .qty { width: 8%; }
-          .rate { width: 15%; }
-          .amount { width: 15%; }
-          .code { width: 18%; }
-
-          .item-name strong {
-            font-size: 12px;
-            line-height: 16px;
+          tbody tr {
+            border-bottom: 1px solid #eee;
           }
 
-          .subline {
+          .number { width: 5%; }
+          .item-name { width: 39%; }
+          .qty { width: 10%; }
+          .rate { width: 16%; }
+          .amount { width: 16%; }
+          .code { width: 14%; }
+
+          .item-code {
             font-size: 10px;
-            margin-top: 3px;
-            line-height: 13px;
+            margin-top: 4px;
           }
 
           .center { text-align: center; }
@@ -776,63 +749,58 @@ export default function SaleInvoicesPage() {
           }
 
           .total-row td {
-            padding-top: 7px;
-            padding-bottom: 7px;
+            padding-top: 9px;
+            padding-bottom: 9px;
           }
 
-          .bottom-section {
+          .bottom {
             display: grid;
             grid-template-columns: 1.05fr 1fr;
             gap: 28px;
-            margin-top: 23px;
+            margin-top: 24px;
             page-break-inside: avoid;
           }
 
           .bottom-heading {
-            font-weight: 700;
             font-size: 13px;
+            font-weight: 700;
             margin-bottom: 9px;
           }
 
           .words {
             line-height: 20px;
-            margin-bottom: 18px;
+            margin-bottom: 20px;
           }
 
           .terms p {
+            margin: 0 0 9px;
             line-height: 17px;
-            margin: 0 0 12px;
           }
 
           .summary-line {
             display: flex;
             justify-content: space-between;
             gap: 12px;
-            margin-bottom: 11px;
-            font-size: 12px;
+            margin-bottom: 12px;
           }
 
           .summary-line.total {
             font-weight: 700;
           }
 
-          .summary-line.balance {
+          .payment-line {
             border-bottom: 1px solid #888;
-            padding-bottom: 7px;
+            padding-bottom: 9px;
           }
 
           .signature {
-            margin-top: 25px;
             text-align: center;
+            margin-top: 25px;
             page-break-inside: avoid;
           }
 
-          .signature-for {
-            margin-bottom: 18px;
-          }
-
           .signature-space {
-            height: 44px;
+            height: 55px;
           }
 
           .signature-label {
@@ -840,135 +808,164 @@ export default function SaleInvoicesPage() {
             font-size: 13px;
           }
 
-          .page-header {
-            display: none;
-          }
-
-          @media print {
-            .page-header {
-              display: block;
-            }
-
-            tr {
-              break-inside: avoid;
-            }
+          tr {
+            break-inside: avoid;
           }
         </style>
       </head>
+
       <body>
-              <header class="invoice-header">
-          <div class="store-name">${issuingStoreName}</div>
-          ${
-            issuingStoreCode !== "—" && issuingStoreCode
-              ? `<div class="store-line">Store Code: ${issuingStoreCode}</div>`
-              : ""
-          }
-          ${issuingStoreAddress !== "—" ? `DIL3` : ""}
-          ${issuingStorePhone !== "—" && issuingStorePhone ? `DIL4` : ""}
-          ${issuingStoreEmail !== "—" && issuingStoreEmail ? `DIL5` : ""}
-          ${issuingStoreGstin !== "—" && issuingStoreGstin ? `DIL6` : ""}
-        </header>
+        <main class="invoice">
 
-        <div class="invoice-title">USED MOBILES</div>
-
-        <section class="billing">
-          <div>
-            <div class="section-heading">Bill To</div>
-            <div class="customer-name">${customerName}</div>
-            ${customerAddress !== "—" ? `<div class="customer-line">${customerAddress}</div>` : ""}
-            ${customerPhone !== "—" ? `<div class="customer-line">Contact No. : ${customerPhone}</div>` : ""}
-          </div>
-
-          <div class="invoice-meta">
-            <div class="section-heading">Invoice Details</div>
-            <div>Invoice No. : ${invoiceNumber}</div>
-            <div>Date : ${esc(invoiceDate)}</div>
-            <div>Time : ${esc(invoiceTime)}</div>
-          </div>
-        </section>
-
-        <table>
-          <thead>
-            <tr>
-              <th class="number">#</th>
-              <th class="item-name">Item name</th>
-              <th class="qty center">Quantity</th>
-              <th class="rate right">Price/ Unit</th>
-              <th class="amount right">Amount</th>
-              <th class="code">Item Code</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemRows}
-            <tr class="total-row">
-              <td></td>
-              <td>Total</td>
-              <td class="center">${quantityTotal}</td>
-              <td></td>
-              <td class="right">₹ ${money(total)}</td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
-
-        <section class="bottom-section">
-          <div>
-            <div class="bottom-heading">Invoice Amount In Words</div>
-            <div class="words">${esc(amountInWords(total))}</div>
-
-            <div class="bottom-heading">Terms and Conditions</div>
-                      <div class="terms">
-              ${termsHtml}
+          <header class="header">
+            <div class="store-name">${esc(SUREBUY.name)}</div>
+            <div class="store-line">${esc(SUREBUY.address)}</div>
+            <div class="store-line">
+              ${esc(SUREBUY.city)}, ${esc(SUREBUY.state)} - ${esc(SUREBUY.pinCode)}
             </div>
-          </div>
+            <div class="store-line">Phone: ${esc(SUREBUY.phone)}</div>
+            <div class="store-line">Email: ${esc(SUREBUY.email)}</div>
 
-          <div>
-            <div class="summary-line">
-              <span>Sub Total</span>
-              <span>₹ ${money(subtotal)}</span>
-            </div>
-            <div class="summary-line total">
-              <span>Total</span>
-              <span>₹ ${money(total)}</span>
-            </div>
-            <div class="summary-line">
-              <span>Received</span>
-              <span>₹ ${money(received)}</span>
-            </div>
-            <div class="summary-line">
-              <span>Balance</span>
-              <span>₹ ${money(balance)}</span>
-            </div>
-            <div class="summary-line balance">
-              <span>Payment mode</span>
-              <span>${paymentMode}</span>
+            <img
+              class="logo"
+              src="${esc(SUREBUY.logo)}"
+              alt="SureBuy Store Logo"
+            >
+          </header>
+
+          <div class="invoice-title">USED MOBILES</div>
+
+          <section class="billing">
+            <div>
+              <div class="heading">Bill To</div>
+              <div class="customer-name">${esc(customerName)}</div>
+              ${
+                customerAddress
+                  ? `<div class="customer-line">${esc(customerAddress)}</div>`
+                  : ""
+              }
+              ${
+                customerPhone
+                  ? `<div class="customer-line">Contact No. : ${esc(customerPhone)}</div>`
+                  : ""
+              }
             </div>
 
-            <div class="signature">
-              <div class="signature-for">For: ${issuingStoreName}</div>
-                            <div class="signature-space"></div>
-              <div class="signature-label">Authorized Signatory</div>
+            <div class="invoice-meta">
+              <div class="heading">Invoice Details</div>
+              <div>Invoice No. : ${esc(invoiceNumber)}</div>
+              <div>Date : ${esc(invoiceDate)}</div>
+              <div>Time : ${esc(invoiceTime)}</div>
             </div>
-          </div>
-        </section>
+          </section>
+
+          <table>
+            <thead>
+              <tr>
+                <th class="number">#</th>
+                <th class="item-name">Item name</th>
+                <th class="qty center">Quantity</th>
+                <th class="rate right">Price/ Unit</th>
+                <th class="amount right">Amount</th>
+                <th class="code">Item Code</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${itemRows}
+
+              <tr class="total-row">
+                <td></td>
+                <td>Total</td>
+                <td class="center">${quantityTotal}</td>
+                <td></td>
+                <td class="right">₹ ${money(total)}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <section class="bottom">
+            <div>
+              <div class="bottom-heading">Invoice Amount In Words</div>
+              <div class="words">${esc(getAmountInWords(total))}</div>
+
+              <div class="bottom-heading">Terms and Conditions</div>
+              <div class="terms">
+                ${SUREBUY.terms.map((line) => `<p>${esc(line)}</p>`).join("")}
+              </div>
+            </div>
+
+            <div>
+              <div class="summary-line">
+                <span>Sub Total</span>
+                <span>₹ ${money(subtotal)}</span>
+              </div>
+
+              <div class="summary-line total">
+                <span>Total</span>
+                <span>₹ ${money(total)}</span>
+              </div>
+
+              <div class="summary-line">
+                <span>Received</span>
+                <span>₹ ${money(received)}</span>
+              </div>
+
+              <div class="summary-line">
+                <span>Balance</span>
+                <span>₹ ${money(balance)}</span>
+              </div>
+
+              <div class="summary-line payment-line">
+                <span>Payment mode</span>
+                <span>${esc(paymentMode)}</span>
+              </div>
+
+              <div class="signature">
+                <div>For: SUREBUY STORE</div>
+                <div class="signature-space"></div>
+                <div class="signature-label">Authorized Signatory</div>
+              </div>
+            </div>
+          </section>
+
+        </main>
       </body>
       </html>
     `);
+
       printWindow.document.close();
 
-      printWindow.onload = () => {
+      const logo = printWindow.document.querySelector(
+        ".logo",
+      ) as HTMLImageElement;
+
+      const printInvoice = () => {
         printWindow.focus();
         printWindow.print();
       };
+
+      if (logo.complete) {
+        printInvoice();
+      } else {
+        logo.onload = printInvoice;
+        logo.onerror = () => {
+          alert(
+            "SureBuy logo could not be loaded. Check public/surebuy-logo.png.",
+          );
+        };
+      }
     } catch (error) {
       console.error("Invoice printing failed:", error);
       alert(
         error instanceof Error
           ? `Unable to print invoice: ${error.message}`
-          : "Unable to print invoice. Please try again.",
+          : "Unable to print invoice.",
       );
     }
   };
+
   const handleViewInvoice = (invoice: SaleInvoice) => {
     setOpenMenuId(null);
     router.push(`/sales/${encodeURIComponent(invoice.id)}`);
@@ -1297,21 +1294,11 @@ export default function SaleInvoicesPage() {
                       {invoice.date}
                     </td>
 
-                    <td
-                      className="py-3 pr-3 text-blue-600 hover:underline cursor-pointer"
-                      onClick={() =>
-                        router.push(`/sales/${encodeURIComponent(invoice.id)}`)
-                      }
-                    >
+                    <td className="py-3 pr-3 text-gray-800">
                       {invoice.invoiceNo}
                     </td>
 
-                    <td
-                      className="py-3 pr-3 font-medium cursor-pointer"
-                      onClick={() =>
-                        router.push(`/sales/${encodeURIComponent(invoice.id)}`)
-                      }
-                    >
+                    <td className="py-3 pr-3 font-medium">
                       {invoice.partyName}
                     </td>
 
