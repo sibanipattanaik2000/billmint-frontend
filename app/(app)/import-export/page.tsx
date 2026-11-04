@@ -283,14 +283,25 @@ function getField(row: CsvRow, name: string): string {
   const aliases: Record<string, string[]> = {
     name: ["item name", "name of mobile"],
     imei: ["imei number", "imei num", "imei no"],
-    "opening stock": ["quantity"],
+    sku: ["item code", "item number", "item no"],
+    "model name": ["model", "product model"],
+    "purchase price": ["purchase rate", "cost price"],
+    "sale price": ["selling price", "sell price"],
+    mrp: ["maximum retail price"],
+    "opening stock": ["quantity", "qty"],
+    "hsn/sac": ["hsn", "sac"],
   };
 
   const direct = row[normalized];
-  if (direct !== undefined) return direct;
+
+  if (direct !== undefined) {
+    return direct;
+  }
 
   for (const alias of aliases[normalized] ?? []) {
-    if (row[alias] !== undefined) return row[alias];
+    if (row[alias] !== undefined) {
+      return row[alias];
+    }
   }
 
   return "";
@@ -336,13 +347,15 @@ function getItemTrackSerial(row: CsvRow, imei: string | undefined): boolean {
 }
 
 function optionalNumber(row: CsvRow, name: string): number | undefined {
-  const value = getField(row, name);
+  const value = getField(row, name).trim();
+
   if (!value) return undefined;
 
-  const parsed = Number(value);
+  const normalized = value.replace(/[₹,\s]/g, "");
+  const parsed = Number(normalized);
 
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`${name} must be a valid number.`);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a valid non-negative number.`);
   }
 
   return parsed;
@@ -447,6 +460,17 @@ function ensureSupportedImport(module: ModuleType): void {
 function validateItemRows(rows: CsvRow[]): string[] {
   const errors: string[] = [];
   const seenImei = new Set<string>();
+  const seenSku = new Set<string>();
+
+  const numericFields = [
+    "Purchase Price",
+    "Sale Price",
+    "MRP",
+    "Opening Stock",
+    "Minimum Stock",
+    "GST Rate",
+    "Discount Percent",
+  ];
 
   rows.forEach((row, index) => {
     const rowNumber = index + 2;
@@ -454,24 +478,56 @@ function validateItemRows(rows: CsvRow[]): string[] {
     try {
       const name = getItemField(row, "Name").trim();
       const imei = optionalValue(getItemField(row, "IMEI"));
+      const sku = optionalValue(getItemField(row, "SKU"));
 
       if (!name) {
-        throw new Error("Name is required.");
+        throw new Error("Item name is required.");
       }
 
       if (imei && !/^\d{15}$/.test(imei)) {
-        throw new Error("IMEI must contain exactly 15 digits.");
+        throw new Error(
+          `IMEI "${imei}" must contain exactly 15 digits. Check the original device record.`,
+        );
       }
 
       if (imei && seenImei.has(imei)) {
         throw new Error(`Duplicate IMEI "${imei}" in this file.`);
       }
 
+      if (sku && seenSku.has(sku)) {
+        throw new Error(`Duplicate item code "${sku}" in this file.`);
+      }
+
+      for (const field of numericFields) {
+        const value = getItemField(row, field);
+
+        if (!value.trim()) continue;
+
+        const number = Number(value);
+
+        if (!Number.isFinite(number) || number < 0) {
+          throw new Error(`${field} must be a valid non-negative number.`);
+        }
+      }
+
+      const gst = optionalNumber(row, "GST Rate");
+      if (gst !== undefined && gst > 100) {
+        throw new Error("GST Rate cannot exceed 100.");
+      }
+
+      const discount = optionalNumber(row, "Discount Percent");
+      if (discount !== undefined && discount > 100) {
+        throw new Error("Discount Percent cannot exceed 100.");
+      }
+
       if (imei) seenImei.add(imei);
+      if (sku) seenSku.add(sku);
     } catch (error) {
       errors.push(
         `Row ${rowNumber}: ${
-          error instanceof Error ? error.message : "Invalid item data."
+          error instanceof Error
+            ? error.message
+            : "Invalid item data."
         }`,
       );
     }
@@ -494,64 +550,80 @@ async function importRows(
   };
 
   // ITEMS: Send the entire spreadsheet in ONE HTTP request.
-  if (module === "items") {
-    const items: Record<string, any>[] = [];
+if (module === "items") {
+  const items: Record<string, any>[] = [];
 
-    rows.forEach((row, index) => {
-      const name = getItemField(row, "Name").trim();
-      const imei = optionalValue(getItemField(row, "IMEI"));
+  rows.forEach((row) => {
+    const name = getItemField(row, "Name").trim();
+    const imei = optionalValue(getItemField(row, "IMEI"));
+    const sku = optionalValue(getItemField(row, "SKU"));
 
-      items.push({
-        name,
+    const modelName =
+      optionalValue(getItemField(row, "Model Name")) || name;
 
-        // ITEM CODE is intentionally ignored.
-        // No SKU, device code or barcode is generated.
+    items.push({
+      name,
 
-        imei: imei ?? undefined,
+      // Excel ITEM CODE is the existing item/SKU code.
+      sku: sku || undefined,
 
-        modelName: name,
+      // Preserve the physical device identifier.
+      imei: imei || undefined,
 
-        // One spreadsheet row represents one physical item.
-        openingStock: 1,
+      modelName,
 
-        purchasePrice: 0,
-        salePrice: 0,
-        mrp: null,
-        minimumStock: 0,
-        gstRate: 18,
-        discountPercent: 0,
+      // One spreadsheet row currently represents one physical device.
+      openingStock: 1,
 
-        trackBatch: false,
-        trackSerial: Boolean(imei),
-        trackExpiry: false,
-      });
+      purchasePrice:
+        optionalNumber(row, "Purchase Price") ?? 0,
+
+      salePrice:
+        optionalNumber(row, "Sale Price") ?? 0,
+
+      mrp:
+        optionalNumber(row, "MRP") ?? null,
+
+      minimumStock:
+        optionalNumber(row, "Minimum Stock") ?? 0,
+
+      gstRate:
+        optionalNumber(row, "GST Rate") ?? 18,
+
+      hsnSac:
+        optionalValue(getItemField(row, "HSN/SAC")),
+
+      discountPercent:
+        optionalNumber(row, "Discount Percent") ?? 0,
+
+      trackBatch: false,
+      trackSerial: Boolean(imei),
+      trackExpiry: false,
     });
+  });
 
-    const response = await api.bulkCreateItems(items);
-    const bulkResult = response.data;
+  const response = await api.bulkCreateItems(items);
+  const bulkResult = response.data;
 
-    result.created = bulkResult.created;
-    result.failed = bulkResult.failed;
+  result.created = bulkResult.created;
+  result.failed = bulkResult.failed;
 
-    const failedIndexes = new Set<number>();
+  bulkResult.results.forEach((entry) => {
+    if (!entry.success) {
+      const originalIndex = entry.row - 2;
 
-    bulkResult.results.forEach((entry) => {
-      if (!entry.success) {
-        const originalIndex = entry.row - 2;
-
-        if (originalIndex >= 0 && originalIndex < rows.length) {
-          failedIndexes.add(originalIndex);
-          result.failedRows.push(rows[originalIndex]);
-        }
-
-        result.errors.push(
-          `Row ${entry.row}: ${entry.message || "Item creation failed."}`,
-        );
+      if (originalIndex >= 0 && originalIndex < rows.length) {
+        result.failedRows.push(rows[originalIndex]);
       }
-    });
 
-    return result;
-  }
+      result.errors.push(
+        `Row ${entry.row}: ${entry.message || "Item creation failed."}`,
+      );
+    }
+  });
+
+  return result;
+}
 
   // Other import modules retain their existing individual workflows.
   for (let index = 0; index < rows.length; index += 1) {
@@ -618,8 +690,7 @@ async function importRows(
     } catch (error) {
       result.failed++;
 
-      const message =
-        error instanceof Error ? error.message : "Unknown error";
+      const message = error instanceof Error ? error.message : "Unknown error";
 
       result.errors.push(`Row ${rowNumber}: ${message}`);
       result.failedRows.push(row);

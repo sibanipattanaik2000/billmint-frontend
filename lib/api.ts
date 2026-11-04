@@ -401,7 +401,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ items }),
     }),
-    
+
   updateItem: (id: string, data: Record<string, any>) =>
     request<ApiSuccess<any>>(`/items/${id}`, {
       method: "PATCH",
@@ -443,13 +443,16 @@ export const api = {
       }),
     }),
 
+  stockTransferAvailableUnits: () =>
+    request<ApiSuccess<any[]>>("/stock-transfers/available-units"),
+
   stockTransfers: () => request<ApiSuccess<any[]>>("/stock-transfers"),
 
   createStockTransfer: (data: {
     toStoreCode: string;
     items: Array<{
       itemId: string;
-      quantity: number;
+      inventoryUnitIds: string[];
     }>;
     notes?: string;
   }) =>
@@ -457,6 +460,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+
+  receiveStockTransfer: (
+    transferId: string,
+    units: Array<{
+      transferUnitId: string;
+      barcode: string;
+    }>,
+  ) =>
+    request<ApiSuccess<any>>(
+      `/stock-transfers/${encodeURIComponent(transferId)}/receive`,
+      {
+        method: "POST",
+        body: JSON.stringify({ units }),
+      },
+    ),
 
   /* =======================================================
      CASH & BANK
