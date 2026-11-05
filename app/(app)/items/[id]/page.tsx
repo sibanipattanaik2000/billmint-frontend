@@ -38,6 +38,19 @@ interface Item {
   unit?: { name?: string | null; shortName?: string | null } | null;
   supplier?: { name?: string | null } | null;
   stockMovements?: StockMovement[];
+  imei?: string | null;
+  deviceCode?: string | null;
+  sourceStoreCode?: string | null;
+  inventoryUnits?: {
+    id: string;
+    itemCode?: string | null;
+    imei?: string | null;
+    serialNumber?: string | null;
+    barcode?: string | null;
+    sourceCode?: string | null;
+    status: string;
+    purchasePrice?: string | number | null;
+  }[];
 }
 
 function toNumber(value: unknown): number {
@@ -156,7 +169,9 @@ export default function ItemDetailPage() {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
-        <div className="text-gray-500">Loading item details from the server…</div>
+        <div className="text-gray-500">
+          Loading item details from the server…
+        </div>
       </div>
     );
   }
@@ -244,7 +259,9 @@ export default function ItemDetailPage() {
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
-            onClick={() => router.push(`/items/${encodeURIComponent(item.id)}/edit`)}
+            onClick={() =>
+              router.push(`/items/${encodeURIComponent(item.id)}/edit`)
+            }
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm font-medium"
           >
             ADJUST ITEM
@@ -265,10 +282,7 @@ export default function ItemDetailPage() {
             aria-label="Refresh item details"
             className="p-2 border rounded hover:bg-gray-50 disabled:opacity-50"
           >
-            <RefreshCw
-              size={16}
-              className={refreshing ? "animate-spin" : ""}
-            />
+            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
           </button>
         </div>
       </div>
@@ -344,7 +358,34 @@ export default function ItemDetailPage() {
               <p className="text-xs text-gray-500 mb-1">Item Code</p>
               <p className="text-sm font-medium">{item.sku || "—"}</p>
             </div>
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Device Source Code</p>
+              <p className="text-sm font-medium">
+                {item.inventoryUnits
+                  ?.map((unit) => unit.sourceCode)
+                  .filter(Boolean)
+                  .join(", ") || "—"}
+              </p>
+            </div>
 
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Source Store Code</p>
+              <p className="text-sm font-medium">
+                {item.sourceStoreCode || "—"}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500 mb-1">IMEI</p>
+              <p className="text-sm font-medium font-mono">
+                {item.inventoryUnits
+                  ?.map((unit) => unit.imei)
+                  .filter(Boolean)
+                  .join(", ") ||
+                  item.imei ||
+                  "—"}
+              </p>
+            </div>
             <div>
               <p className="text-xs text-gray-500 mb-1">Barcode</p>
               <p className="text-sm font-medium">{item.barcode || "—"}</p>
@@ -398,7 +439,9 @@ export default function ItemDetailPage() {
             {item.description && (
               <div className="sm:col-span-2 lg:col-span-3">
                 <p className="text-xs text-gray-500 mb-1">Description</p>
-                <p className="text-sm whitespace-pre-wrap">{item.description}</p>
+                <p className="text-sm whitespace-pre-wrap">
+                  {item.description}
+                </p>
               </div>
             )}
           </div>
@@ -425,21 +468,14 @@ export default function ItemDetailPage() {
               <tbody>
                 {movements.length > 0 ? (
                   movements.map((movement) => (
-                    <tr
-                      key={movement.id}
-                      className="border-b hover:bg-gray-50"
-                    >
-                      <td className="py-3 px-4">
-                        {movementLabel(movement)}
-                      </td>
+                    <tr key={movement.id} className="border-b hover:bg-gray-50">
+                      <td className="py-3 px-4">{movementLabel(movement)}</td>
 
                       <td className="py-3 px-4">
                         {movement.referenceId || "—"}
                       </td>
 
-                      <td className="py-3 px-4">
-                        {movement.notes || "—"}
-                      </td>
+                      <td className="py-3 px-4">{movement.notes || "—"}</td>
 
                       <td className="py-3 px-4 whitespace-nowrap">
                         {formatDate(movement.date)}
@@ -447,13 +483,17 @@ export default function ItemDetailPage() {
 
                       <td className="py-3 px-4 text-right text-green-700">
                         {toNumber(movement.quantityIn) > 0
-                          ? toNumber(movement.quantityIn).toLocaleString("en-IN")
+                          ? toNumber(movement.quantityIn).toLocaleString(
+                              "en-IN",
+                            )
                           : "—"}
                       </td>
 
                       <td className="py-3 px-4 text-right text-red-600">
                         {toNumber(movement.quantityOut) > 0
-                          ? toNumber(movement.quantityOut).toLocaleString("en-IN")
+                          ? toNumber(movement.quantityOut).toLocaleString(
+                              "en-IN",
+                            )
                           : "—"}
                       </td>
 
@@ -478,6 +518,52 @@ export default function ItemDetailPage() {
           <p className="text-xs text-gray-500 mt-3">
             Showing up to the latest 50 stock movements returned by the backend.
           </p>
+        </div>
+        {/* PHYSICAL DEVICE REGISTER */}
+        <div className="mb-8">
+          <h2 className="font-medium text-gray-700 mb-3">
+            PHYSICAL DEVICE REGISTER
+          </h2>
+
+          <div className="border rounded-lg overflow-x-auto">
+            <table className="w-full text-sm min-w-[750px]">
+              <thead>
+                <tr className="bg-gray-50 border-b text-left text-gray-500">
+                  <th className="py-3 px-4">ITEM CODE</th>
+                  <th className="py-3 px-4">SOURCE CODE</th>
+                  <th className="py-3 px-4">IMEI</th>
+                  <th className="py-3 px-4">BARCODE</th>
+                  <th className="py-3 px-4">STATUS</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {(item.inventoryUnits ?? []).length > 0 ? (
+                  item.inventoryUnits!.map((unit) => (
+                    <tr key={unit.id} className="border-b last:border-0">
+                      <td className="py-3 px-4 font-medium">
+                        {unit.itemCode || item.deviceCode || item.sku || "—"}
+                      </td>
+                      <td className="py-3 px-4 text-indigo-700 font-medium">
+                        {unit.sourceCode || "—"}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-xs">
+                        {unit.imei || "—"}
+                      </td>
+                      <td className="py-3 px-4">{unit.barcode || "—"}</td>
+                      <td className="py-3 px-4">{unit.status}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-gray-400">
+                      No individual device records available.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

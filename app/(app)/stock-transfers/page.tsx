@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -62,6 +61,8 @@ type Transfer = {
     destinationItem?: { id: string; name: string; sku?: string | null };
     transferUnits: TransferUnit[];
   }>;
+  isIncoming?: boolean;
+  isOutgoing?: boolean;
 };
 
 function formatDate(value?: string | null) {
@@ -121,12 +122,9 @@ export default function StockTransfersPage() {
     setError("");
 
     try {
-      const [storeResponse, unitResponse, transferResponse] =
-        await Promise.all([
-          api.stores(),
-          api.stockTransferAvailableUnits(),
-          api.stockTransfers(),
-        ]);
+      const [storeResponse, unitResponse, transferResponse] = await Promise.all(
+        [api.stores(), api.stockTransferAvailableUnits(), api.stockTransfers()],
+      );
 
       setStores(storeResponse.data || []);
       setUnits(unitResponse.data || []);
@@ -177,9 +175,7 @@ export default function StockTransfersPage() {
 
   function selectAllVisible() {
     const visibleIds = filteredUnits.map((unit) => unit.id);
-    const allSelected = visibleIds.every((id) =>
-      selectedUnitIds.includes(id),
-    );
+    const allSelected = visibleIds.every((id) => selectedUnitIds.includes(id));
 
     setSelectedUnitIds((current) =>
       allSelected
@@ -266,9 +262,7 @@ export default function StockTransfersPage() {
         .map((unit) => ({
           ...unit,
           itemName:
-            item.destinationItem?.name ||
-            item.sourceItem?.name ||
-            "Device",
+            item.destinationItem?.name || item.sourceItem?.name || "Device",
         })),
     );
   }
@@ -278,9 +272,7 @@ export default function StockTransfersPage() {
     setSuccess("");
 
     const pending = getPendingUnits(transfer);
-    const selected = pending.filter(
-      (unit) => receiptSelections[unit.id],
-    );
+    const selected = pending.filter((unit) => receiptSelections[unit.id]);
 
     if (selected.length === 0) {
       setError("Select at least one pending device to receive.");
@@ -304,10 +296,7 @@ export default function StockTransfersPage() {
     setReceivingTransferId(transfer.id);
 
     try {
-      const response = await api.receiveStockTransfer(
-        transfer.id,
-        payload,
-      );
+      const response = await api.receiveStockTransfer(transfer.id, payload);
 
       const received = response.data?.receivedCount ?? payload.length;
       const remaining = response.data?.pendingCount ?? 0;
@@ -342,10 +331,10 @@ export default function StockTransfersPage() {
 
   const pendingTransfers = transfers.filter(
     (transfer) =>
-      transfer.status === "DISPATCHED" ||
-      transfer.status === "PARTIALLY_RECEIVED",
+      transfer.isIncoming === true &&
+      (transfer.status === "DISPATCHED" ||
+        transfer.status === "PARTIALLY_RECEIVED"),
   );
-
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -365,9 +354,7 @@ export default function StockTransfersPage() {
           disabled={loading}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
         >
-          <RefreshCw
-            className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
-          />
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           Refresh
         </button>
       </div>
@@ -399,9 +386,7 @@ export default function StockTransfersPage() {
             <ArrowLeftRight className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="font-semibold text-slate-900">
-              Dispatch devices
-            </h2>
+            <h2 className="font-semibold text-slate-900">Dispatch devices</h2>
             <p className="text-xs text-slate-500">
               Selected devices are marked in transit. The destination must
               confirm receipt before they become available there.
@@ -465,7 +450,9 @@ export default function StockTransfersPage() {
         />
 
         {loading ? (
-          <p className="p-5 text-sm text-slate-500">Loading available devices...</p>
+          <p className="p-5 text-sm text-slate-500">
+            Loading available devices...
+          </p>
         ) : filteredUnits.length === 0 ? (
           <p className="rounded-lg bg-amber-50 p-4 text-sm text-amber-800">
             No available IMEI-tracked devices found for this store.
@@ -545,10 +532,7 @@ export default function StockTransfersPage() {
           <button
             type="submit"
             disabled={
-              submitting ||
-              loading ||
-              selectedCount === 0 ||
-              !toStoreCode
+              submitting || loading || selectedCount === 0 || !toStoreCode
             }
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -594,9 +578,9 @@ export default function StockTransfersPage() {
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       From {transfer.fromBusiness?.name || "—"} (
-                      {transfer.fromBusiness?.storeCode || "—"})
-                      {" · "}
-                      Dispatched {formatDate(transfer.dispatchedAt || transfer.createdAt)}
+                      {transfer.fromBusiness?.storeCode || "—"}){" · "}
+                      Dispatched{" "}
+                      {formatDate(transfer.dispatchedAt || transfer.createdAt)}
                     </p>
                   </div>
                   <span
@@ -726,13 +710,15 @@ export default function StockTransfersPage() {
               <tbody className="divide-y divide-slate-100">
                 {transfers.map((transfer) => {
                   const deviceCount = (transfer.items || []).reduce(
-                    (total, item) =>
-                      total + (item.transferUnits?.length || 0),
+                    (total, item) => total + (item.transferUnits?.length || 0),
                     0,
                   );
 
                   return (
-                    <tr key={transfer.id} className="align-top hover:bg-slate-50">
+                    <tr
+                      key={transfer.id}
+                      className="align-top hover:bg-slate-50"
+                    >
                       <td className="px-4 py-3 font-medium text-slate-900">
                         {transfer.transferNumber}
                       </td>

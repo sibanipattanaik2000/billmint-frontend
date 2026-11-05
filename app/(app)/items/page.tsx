@@ -44,6 +44,8 @@ interface Item {
     itemCode: string | null;
     imei: string | null;
     serialNumber: string | null;
+    barcode: string | null;
+    sourceCode: string | null;
     status: string;
     purchasePrice: number | string | null;
   }[];
@@ -160,6 +162,7 @@ export default function ItemsPage() {
               item.brand?.name,
               ...(item.inventoryUnits ?? []).map((unit) => unit.itemCode),
               ...(item.inventoryUnits ?? []).map((unit) => unit.imei),
+              ...(item.inventoryUnits ?? []).map((unit) => unit.sourceCode),
             ].some((value) =>
               String(value ?? "")
                 .toLowerCase()
@@ -736,6 +739,9 @@ export default function ItemsPage() {
                         Item Code
                       </th>
                       <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Source Code
+                      </th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         IMEI
                       </th>
                       <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -750,7 +756,7 @@ export default function ItemsPage() {
                   <tbody>
                     {physicalUnits.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-4 py-10 text-center">
+                        <td colSpan={5} className="px-4 py-10 text-center">
                           <Package className="mx-auto h-8 w-8 text-slate-300" />
                           <p className="mt-2 text-sm font-medium text-slate-700">
                             No tracked units recorded
@@ -778,7 +784,9 @@ export default function ItemsPage() {
                                 item.sku ||
                                 "—"}
                             </td>
-
+                            <td className="px-4 py-3 font-medium text-indigo-700">
+                              {unit.sourceCode || "—"}
+                            </td>
                             <td className="px-4 py-3 font-mono text-xs text-slate-700">
                               {unit.imei || "—"}
                             </td>
@@ -842,6 +850,17 @@ export default function ItemsPage() {
                   </div>
                   <div className="mt-1 text-sm font-medium text-indigo-700">
                     {selectedItem.sourceStoreCode || "Not specified"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Device Source Code
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-indigo-700">
+                    {selectedItem.inventoryUnits
+                      ?.map((unit) => unit.sourceCode)
+                      .filter(Boolean)
+                      .join(", ") || "Not specified"}
                   </div>
                 </div>
                 <div>

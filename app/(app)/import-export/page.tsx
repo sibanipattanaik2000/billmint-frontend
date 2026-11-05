@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useRef, useState } from "react";
@@ -19,6 +20,16 @@ type ImportResult = {
   failed: number;
   errors: string[];
   failedRows: CsvRow[];
+};
+
+type BulkImportResponse = {
+  created: number;
+  failed: number;
+  results: Array<{
+    row: number;
+    success: boolean;
+    message?: string;
+  }>;
 };
 
 const MODULES: { id: ModuleType; label: string; icon: string }[] = [
@@ -45,6 +56,7 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Opening Balance",
     "Notes",
   ],
+
   items: [
     "Name",
     "Model Name",
@@ -52,6 +64,7 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Device Code",
     "Barcode",
     "IMEI",
+    "Source Code",
     "Category ID",
     "Brand ID",
     "Unit ID",
@@ -69,6 +82,7 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Track Serial",
     "Track Expiry",
   ],
+
   "sale-invoices": [
     "Date",
     "Invoice Number",
@@ -78,6 +92,7 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Paid Amount",
     "Balance Amount",
   ],
+
   "purchase-invoices": [
     "Date",
     "Bill Number",
@@ -87,6 +102,7 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Paid Amount",
     "Balance Amount",
   ],
+
   expenses: [
     "Date",
     "Category",
@@ -96,6 +112,18 @@ const CSV_HEADERS: Record<ModuleType, string[]> = {
     "Notes",
   ],
 };
+
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function normalizeHeader(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.:]+$/g, "");
+}
 
 function csvEscape(value: unknown): string {
   const text = value == null ? "" : String(value);
@@ -109,11 +137,30 @@ function toCsv(headers: string[], rows: unknown[][]): string {
   ].join("\r\n");
 }
 
+function downloadCsv(filename: string, content: string): void {
+  const blob = new Blob(["\uFEFF", content], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(url);
+}
+
 function parseCsv(input: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";
   let quoted = false;
+
   const source = input.replace(/^\uFEFF/, "");
 
   for (let i = 0; i < source.length; i += 1) {
@@ -130,6 +177,7 @@ function parseCsv(input: string): string[][] {
       } else {
         cell += char;
       }
+
       continue;
     }
 
@@ -157,21 +205,14 @@ function parseCsv(input: string): string[][] {
     rows.push(row);
   }
 
-  return rows.filter((values) => values.some((value) => value.trim() !== ""));
-}
-
-function normalizeHeader(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/[.:]+$/g, "");
+  return rows.filter((values) =>
+    values.some((value) => value.trim() !== ""),
+  );
 }
 
 /**
- * IMEIs are identifiers, not quantities.
- * Read raw Excel values so formatting does not convert an identifier
- * into a scientific-notation display string.
+ * Identifiers must remain strings.
+ * Never convert IMEI or item codes into numbers.
  */
 function spreadsheetCellToString(
   value: unknown,
@@ -181,15 +222,19 @@ function spreadsheetCellToString(
   if (value === null || value === undefined) return "";
 
   const text = String(value).trim();
-  const normalizedHeader = normalizeHeader(header);
+  const normalized = normalizeHeader(header);
 
-  const isImeiColumn = ["imei", "imei number", "imei num", "imei no"].includes(
-    normalizedHeader,
-  );
+  const isImei = [
+    "imei",
+    "imei number",
+    "imei num",
+    "imei no",
+    "imei no.",
+  ].includes(normalized);
 
-  if (isImeiColumn && /^\d+(?:\.\d+)?[eE][+-]?\d+$/.test(text)) {
+  if (isImei && /[eE][+-]?\d+/.test(text)) {
     throw new Error(
-      `Data row ${rowNumber}: IMEI is written in scientific notation ("${text}"). Enter the original 15-digit IMEI as text. If Excel has rounded the original digits, they cannot be recovered from this value.`,
+      `Row ${rowNumber}: IMEI appears in scientific notation. Format the Excel IMEI column as Text and enter the original 15-digit value.`,
     );
   }
 
@@ -203,7 +248,10 @@ function spreadsheetToObjects(grid: unknown[][]): {
   const trimmedGrid = grid.map((sourceRow) => {
     const row = [...sourceRow];
 
-    while (row.length > 0 && String(row[row.length - 1] ?? "").trim() === "") {
+    while (
+      row.length > 0 &&
+      String(row[row.length - 1] ?? "").trim() === ""
+    ) {
       row.pop();
     }
 
@@ -220,82 +268,69 @@ function spreadsheetToObjects(grid: unknown[][]): {
     );
   }
 
-  const originalHeaders = nonEmptyRows[0].map((value) =>
+  const headers = nonEmptyRows[0].map((value) =>
     String(value ?? "").trim(),
   );
 
-  const normalizedHeaders = originalHeaders.map(normalizeHeader);
+  const normalizedHeaders = headers.map(normalizeHeader);
 
   if (normalizedHeaders.some((header) => !header)) {
-    throw new Error("The file contains an empty column header.");
+    throw new Error("The spreadsheet contains an empty column header.");
   }
 
   if (new Set(normalizedHeaders).size !== normalizedHeaders.length) {
-    throw new Error(
-      "The file contains duplicate column headers. Rename duplicate columns and upload again.",
-    );
+    throw new Error("Duplicate column headers were found.");
   }
 
-  const rows: CsvRow[] = nonEmptyRows.slice(1).map((values, rowIndex) => {
+  const rows: CsvRow[] = nonEmptyRows.slice(1).map((values, index) => {
     const hasExtraData = values
-      .slice(originalHeaders.length)
+      .slice(headers.length)
       .some((value) => String(value ?? "").trim() !== "");
 
     if (hasExtraData) {
       throw new Error(
-        `Data row ${rowIndex + 2} contains values beyond the last header column. Add the missing column header or correct the spreadsheet.`,
+        `Row ${index + 2} contains data beyond the last header column.`,
       );
     }
 
-    const row: CsvRow = {};
+    const result: CsvRow = {};
 
-    normalizedHeaders.forEach((header, index) => {
-      row[header] = spreadsheetCellToString(
-        values[index],
+    normalizedHeaders.forEach((header, columnIndex) => {
+      result[header] = spreadsheetCellToString(
+        values[columnIndex],
         header,
-        rowIndex + 2,
+        index + 2,
       );
     });
 
-    return row;
+    return result;
   });
 
-  return { headers: originalHeaders, rows };
-}
-
-function parseBoolean(
-  value: string | undefined,
-  defaultValue = false,
-): boolean {
-  if (!value?.trim()) return defaultValue;
-
-  const normalized = value.trim().toLowerCase();
-
-  if (["true", "yes", "1", "y"].includes(normalized)) return true;
-  if (["false", "no", "0", "n"].includes(normalized)) return false;
-
-  throw new Error(`Expected Yes/No or True/False, but received "${value}".`);
+  return { headers, rows };
 }
 
 function getField(row: CsvRow, name: string): string {
   const normalized = normalizeHeader(name);
 
   const aliases: Record<string, string[]> = {
-    name: ["item name", "name of mobile"],
-    imei: ["imei number", "imei num", "imei no"],
-    sku: ["item code", "item number", "item no"],
+    name: ["item name", "name of mobile", "product name"],
+    sku: ["item code", "item number", "item no", "item code."],
+    imei: ["imei number", "imei num", "imei no", "imei no."],
+    "source code": ["source", "source item code", "vendor code"],
     "model name": ["model", "product model"],
-    "purchase price": ["purchase rate", "cost price"],
+    "device code": ["device item code"],
+    "purchase price": ["purchase rate", "cost price", "buying price"],
     "sale price": ["selling price", "sell price"],
     mrp: ["maximum retail price"],
-    "opening stock": ["quantity", "qty"],
+    "opening stock": ["quantity", "qty", "stock"],
+    "minimum stock": ["min stock"],
     "hsn/sac": ["hsn", "sac"],
+    "payment method": ["payment mode"],
+    "pin code": ["pincode", "postal code"],
   };
 
-  const direct = row[normalized];
-
-  if (direct !== undefined) {
-    return direct;
+  if (row[normalized] !== undefined) {
+    return row[normalized];
   }
 
   for (const alias of aliases[normalized] ?? []) {
@@ -307,51 +342,29 @@ function getField(row: CsvRow, name: string): string {
   return "";
 }
 
-function getItemField(row: CsvRow, name: string): string {
-  return getField(row, name);
+function optionalValue(value: string): string | undefined {
+  return value.trim() || undefined;
 }
 
 /**
- * Detects the simplified three-column item import format.
- * The row must contain all three headers, regardless of whether
- * the header spelling uses the supported aliases.
+ * Supports values such as:
+ * 12000
+ * 12,000
+ * ₹12,000
+ * 12000.50
  */
-function isThreeFieldItemRow(row: CsvRow): boolean {
-  const hasName =
-    row.name !== undefined ||
-    row["item name"] !== undefined ||
-    row["name of mobile"] !== undefined;
-
-  const hasImeiHeader =
-    row.imei !== undefined ||
-    row["imei number"] !== undefined ||
-    row["imei num"] !== undefined ||
-    row["imei no"] !== undefined;
-
-  return hasName && hasImeiHeader;
-}
-function getItemOpeningStock(row: CsvRow): number {
-  return (
-    optionalNumber(row, "Opening Stock") ?? optionalNumber(row, "Quantity") ?? 0
-  );
-}
-
-function getItemTrackSerial(row: CsvRow, imei: string | undefined): boolean {
-  const value = getField(row, "Track Serial");
-
-  // Infer serial tracking if IMEI exists and Track Serial is blank.
-  if (!value.trim()) return Boolean(imei);
-
-  // Honor an explicit Yes/No selection.
-  return parseBoolean(value);
-}
-
-function optionalNumber(row: CsvRow, name: string): number | undefined {
+function optionalNumber(
+  row: CsvRow,
+  name: string,
+): number | undefined {
   const value = getField(row, name).trim();
 
   if (!value) return undefined;
 
-  const normalized = value.replace(/[₹,\s]/g, "");
+  const normalized = value
+    .replace(/[₹,\s]/g, "")
+    .replace(/^(INR)/i, "");
+
   const parsed = Number(normalized);
 
   if (!Number.isFinite(parsed) || parsed < 0) {
@@ -371,8 +384,18 @@ function requiredNumber(row: CsvRow, name: string): number {
   return value;
 }
 
-function optionalValue(value: string): string | undefined {
-  return value.trim() || undefined;
+function parseBoolean(
+  value: string | undefined,
+  defaultValue = false,
+): boolean {
+  if (!value?.trim()) return defaultValue;
+
+  const normalized = value.trim().toLowerCase();
+
+  if (["true", "yes", "1", "y"].includes(normalized)) return true;
+  if (["false", "no", "0", "n"].includes(normalized)) return false;
+
+  throw new Error(`Expected Yes/No or True/False, received "${value}".`);
 }
 
 function toIsoDate(value: string): string | undefined {
@@ -381,7 +404,7 @@ function toIsoDate(value: string): string | undefined {
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
-    throw new Error(`Invalid date: ${value}. Use YYYY-MM-DD.`);
+    throw new Error(`Invalid date "${value}". Use YYYY-MM-DD.`);
   }
 
   return date.toISOString();
@@ -397,25 +420,11 @@ function dateOnly(value: unknown): string {
     : date.toISOString().slice(0, 10);
 }
 
-function downloadCsv(filename: string, content: string): void {
-  const blob = new Blob(["\uFEFF", content], {
-    type: "text/csv;charset=utf-8;",
-  });
-
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-
-  URL.revokeObjectURL(url);
-}
-
 async function fetchAllPages<T>(
-  fetchPage: (params: { page: number; limit: number }) => Promise<{
+  fetchPage: (params: {
+    page: number;
+    limit: number;
+  }) => Promise<{
     data: T[];
     pagination?: { totalPages?: number };
   }>,
@@ -450,64 +459,72 @@ async function fetchAllPages<T>(
 }
 
 function ensureSupportedImport(module: ModuleType): void {
-  if (module === "sale-invoices" || module === "purchase-invoices") {
+  if (
+    module === "sale-invoices" ||
+    module === "purchase-invoices"
+  ) {
     throw new Error(
-      "Invoice import is not enabled. Invoice creation requires validation of invoice line items, party references, numbering, stock and payment balances. Export is available.",
+      "Invoice import is not enabled yet. Invoice creation requires validated line items, stock and accounting balances. Export is available.",
     );
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Item validation and import                                                 */
+/* -------------------------------------------------------------------------- */
+
 function validateItemRows(rows: CsvRow[]): string[] {
   const errors: string[] = [];
-  const seenImei = new Set<string>();
-  const seenSku = new Set<string>();
-
-  const numericFields = [
-    "Purchase Price",
-    "Sale Price",
-    "MRP",
-    "Opening Stock",
-    "Minimum Stock",
-    "GST Rate",
-    "Discount Percent",
-  ];
+  const seenImeis = new Set<string>();
+  const seenSkus = new Set<string>();
 
   rows.forEach((row, index) => {
     const rowNumber = index + 2;
 
     try {
-      const name = getItemField(row, "Name").trim();
-      const imei = optionalValue(getItemField(row, "IMEI"));
-      const sku = optionalValue(getItemField(row, "SKU"));
+      const name = getField(row, "Name").trim();
+      const sku = optionalValue(getField(row, "SKU"));
+      const imei = optionalValue(getField(row, "IMEI"));
+      const sourceCode = optionalValue(getField(row, "Source Code"));
 
       if (!name) {
         throw new Error("Item name is required.");
       }
 
+      if (imei && !sku) {
+        throw new Error("Item Code is required when an IMEI is provided.");
+      }
+
       if (imei && !/^\d{15}$/.test(imei)) {
         throw new Error(
-          `IMEI "${imei}" must contain exactly 15 digits. Check the original device record.`,
+          `IMEI "${imei}" must contain exactly 15 digits.`,
         );
       }
 
-      if (imei && seenImei.has(imei)) {
+      if (imei && seenImeis.has(imei)) {
         throw new Error(`Duplicate IMEI "${imei}" in this file.`);
       }
 
-      if (sku && seenSku.has(sku)) {
-        throw new Error(`Duplicate item code "${sku}" in this file.`);
+      if (sku && seenSkus.has(sku)) {
+        throw new Error(`Duplicate Item Code "${sku}" in this file.`);
       }
 
+      if (sourceCode && sourceCode.length > 100) {
+        throw new Error("Source Code cannot exceed 100 characters.");
+      }
+
+      const numericFields = [
+        "Purchase Price",
+        "Sale Price",
+        "MRP",
+        "Opening Stock",
+        "Minimum Stock",
+        "GST Rate",
+        "Discount Percent",
+      ];
+
       for (const field of numericFields) {
-        const value = getItemField(row, field);
-
-        if (!value.trim()) continue;
-
-        const number = Number(value);
-
-        if (!Number.isFinite(number) || number < 0) {
-          throw new Error(`${field} must be a valid non-negative number.`);
-        }
+        optionalNumber(row, field);
       }
 
       const gst = optionalNumber(row, "GST Rate");
@@ -520,20 +537,102 @@ function validateItemRows(rows: CsvRow[]): string[] {
         throw new Error("Discount Percent cannot exceed 100.");
       }
 
-      if (imei) seenImei.add(imei);
-      if (sku) seenSku.add(sku);
+      const openingStock = optionalNumber(row, "Opening Stock");
+
+      if (imei && openingStock !== undefined && openingStock > 1) {
+        throw new Error(
+          "A serialized device with an IMEI must have Opening Stock of 1.",
+        );
+      }
+
+      if (imei) seenImeis.add(imei);
+      if (sku) seenSkus.add(sku);
     } catch (error) {
       errors.push(
         `Row ${rowNumber}: ${
-          error instanceof Error
-            ? error.message
-            : "Invalid item data."
+          error instanceof Error ? error.message : "Invalid item data."
         }`,
       );
     }
   });
 
   return errors;
+}
+
+function buildItemImportPayload(
+  rows: CsvRow[],
+): Record<string, unknown>[] {
+  return rows.map((row) => {
+    const name = getField(row, "Name").trim();
+    const sku = optionalValue(getField(row, "SKU"));
+    const imei = optionalValue(getField(row, "IMEI"));
+    const sourceCode = optionalValue(getField(row, "Source Code"));
+
+    const modelName =
+      optionalValue(getField(row, "Model Name")) || name;
+
+    const explicitTrackSerial = getField(row, "Track Serial");
+
+    const trackSerial = explicitTrackSerial.trim()
+      ? parseBoolean(explicitTrackSerial)
+      : Boolean(imei);
+
+    const openingStock = imei
+      ? 1
+      : optionalNumber(row, "Opening Stock") ?? 1;
+
+    return {
+      name,
+      modelName,
+
+      // Excel ITEM CODE is preserved as the item SKU.
+      sku: sku || undefined,
+
+      deviceCode:
+        optionalValue(getField(row, "Device Code")) || undefined,
+
+      barcode:
+        optionalValue(getField(row, "Barcode")) || undefined,
+
+      // These identifiers are separate fields.
+      imei: imei || undefined,
+      sourceCode: sourceCode || undefined,
+
+      categoryId:
+        optionalValue(getField(row, "Category ID")) || undefined,
+
+      brandId:
+        optionalValue(getField(row, "Brand ID")) || undefined,
+
+      unitId:
+        optionalValue(getField(row, "Unit ID")) || undefined,
+
+      supplierId:
+        optionalValue(getField(row, "Supplier ID")) || undefined,
+
+      description:
+        optionalValue(getField(row, "Description")) || undefined,
+
+      purchasePrice: optionalNumber(row, "Purchase Price") ?? 0,
+      salePrice: optionalNumber(row, "Sale Price") ?? 0,
+      mrp: optionalNumber(row, "MRP") ?? 0,
+
+      openingStock,
+      minimumStock: optionalNumber(row, "Minimum Stock") ?? 0,
+
+      gstRate: optionalNumber(row, "GST Rate") ?? 18,
+
+      hsnSac:
+        optionalValue(getField(row, "HSN/SAC")) || undefined,
+
+      discountPercent:
+        optionalNumber(row, "Discount Percent") ?? 0,
+
+      trackBatch: parseBoolean(getField(row, "Track Batch")),
+      trackSerial,
+      trackExpiry: parseBoolean(getField(row, "Track Expiry")),
+    };
+  });
 }
 
 async function importRows(
@@ -549,70 +648,29 @@ async function importRows(
     failedRows: [],
   };
 
-  // ITEMS: Send the entire spreadsheet in ONE HTTP request.
-if (module === "items") {
-  const items: Record<string, any>[] = [];
+  /* ---------------------------- ITEM BULK IMPORT -------------------------- */
 
-  rows.forEach((row) => {
-    const name = getItemField(row, "Name").trim();
-    const imei = optionalValue(getItemField(row, "IMEI"));
-    const sku = optionalValue(getItemField(row, "SKU"));
+  if (module === "items") {
+    const items = buildItemImportPayload(rows);
 
-    const modelName =
-      optionalValue(getItemField(row, "Model Name")) || name;
+    // One request for the entire spreadsheet, not one request per row.
+    const response = await api.bulkCreateItems(items);
 
-    items.push({
-      name,
+    const bulkResult =
+      response.data as BulkImportResponse;
 
-      // Excel ITEM CODE is the existing item/SKU code.
-      sku: sku || undefined,
+    result.created = Number(bulkResult.created) || 0;
+    result.failed = Number(bulkResult.failed) || 0;
 
-      // Preserve the physical device identifier.
-      imei: imei || undefined,
+    for (const entry of bulkResult.results ?? []) {
+      if (entry.success) continue;
 
-      modelName,
-
-      // One spreadsheet row currently represents one physical device.
-      openingStock: 1,
-
-      purchasePrice:
-        optionalNumber(row, "Purchase Price") ?? 0,
-
-      salePrice:
-        optionalNumber(row, "Sale Price") ?? 0,
-
-      mrp:
-        optionalNumber(row, "MRP") ?? null,
-
-      minimumStock:
-        optionalNumber(row, "Minimum Stock") ?? 0,
-
-      gstRate:
-        optionalNumber(row, "GST Rate") ?? 18,
-
-      hsnSac:
-        optionalValue(getItemField(row, "HSN/SAC")),
-
-      discountPercent:
-        optionalNumber(row, "Discount Percent") ?? 0,
-
-      trackBatch: false,
-      trackSerial: Boolean(imei),
-      trackExpiry: false,
-    });
-  });
-
-  const response = await api.bulkCreateItems(items);
-  const bulkResult = response.data;
-
-  result.created = bulkResult.created;
-  result.failed = bulkResult.failed;
-
-  bulkResult.results.forEach((entry) => {
-    if (!entry.success) {
       const originalIndex = entry.row - 2;
 
-      if (originalIndex >= 0 && originalIndex < rows.length) {
+      if (
+        originalIndex >= 0 &&
+        originalIndex < rows.length
+      ) {
         result.failedRows.push(rows[originalIndex]);
       }
 
@@ -620,25 +678,27 @@ if (module === "items") {
         `Row ${entry.row}: ${entry.message || "Item creation failed."}`,
       );
     }
-  });
 
-  return result;
-}
+    return result;
+  }
 
-  // Other import modules retain their existing individual workflows.
+  /* -------------------------- OTHER IMPORT MODULES ------------------------ */
+
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
 
     try {
       if (module === "parties") {
-        const name = getField(row, "Name");
-        const type = getField(row, "Type").toLowerCase();
+        const name = getField(row, "Name").trim();
+        const type = getField(row, "Type").trim().toLowerCase();
 
-        if (!name) throw new Error("Name is required.");
+        if (!name) {
+          throw new Error("Name is required.");
+        }
 
         if (type !== "customer" && type !== "supplier") {
-          throw new Error('Type must be either "Customer" or "Supplier".');
+          throw new Error('Type must be "Customer" or "Supplier".');
         }
 
         const common = {
@@ -652,7 +712,8 @@ if (module === "items") {
           pinCode: optionalValue(getField(row, "PIN Code")),
           gstin: optionalValue(getField(row, "GSTIN")),
           pan: optionalValue(getField(row, "PAN")),
-          openingBalance: optionalNumber(row, "Opening Balance") ?? 0,
+          openingBalance:
+            optionalNumber(row, "Opening Balance") ?? 0,
           notes: optionalValue(getField(row, "Notes")),
         };
 
@@ -673,7 +734,9 @@ if (module === "items") {
         const description = optionalValue(getField(row, "Description"));
 
         if (!category && !description) {
-          throw new Error("Provide a Category or Description for the expense.");
+          throw new Error(
+            "Provide a Category or Description for the expense.",
+          );
         }
 
         await api.createExpense({
@@ -681,16 +744,18 @@ if (module === "items") {
           date,
           category,
           description,
-          paymentMethod: optionalValue(getField(row, "Payment Method")) ?? "",
+          paymentMethod:
+            optionalValue(getField(row, "Payment Method")) ?? "",
           notes: optionalValue(getField(row, "Notes")),
         });
       }
 
-      result.created++;
+      result.created += 1;
     } catch (error) {
-      result.failed++;
+      result.failed += 1;
 
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message =
+        error instanceof Error ? error.message : "Unknown error";
 
       result.errors.push(`Row ${rowNumber}: ${message}`);
       result.failedRows.push(row);
@@ -700,13 +765,21 @@ if (module === "items") {
   return result;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Page                                                                       */
+/* -------------------------------------------------------------------------- */
+
 export default function ImportExportPage() {
   const [activeTab, setActiveTab] = useState<TabType>("export");
-  const [selectedModule, setSelectedModule] = useState<ModuleType>("parties");
+  const [selectedModule, setSelectedModule] =
+    useState<ModuleType>("parties");
+
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [previewHeaders, setPreviewHeaders] = useState<string[]>([]);
   const [previewRows, setPreviewRows] = useState<CsvRow[]>([]);
   const [previewFileName, setPreviewFileName] = useState("");
@@ -729,7 +802,7 @@ export default function ImportExportPage() {
       selectedModule === "purchase-invoices"
     ) {
       setStatus(
-        "Invoice templates are not offered for import because invoice creation requires validated line items and accounting reconciliation.",
+        "Invoice import templates are unavailable because invoice imports require a dedicated accounting workflow.",
       );
       setErrors([]);
       return;
@@ -750,21 +823,36 @@ export default function ImportExportPage() {
       selectedModule === "purchase-invoices"
     ) {
       setStatus(
-        "Invoice templates are not offered for import because invoice creation requires validated line items and accounting reconciliation.",
+        "Invoice import templates are unavailable because invoice imports require a dedicated accounting workflow.",
       );
       setErrors([]);
       return;
     }
 
-    const worksheet = XLSX.utils.aoa_to_sheet([CSV_HEADERS[selectedModule]]);
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      CSV_HEADERS[selectedModule],
+    ]);
+
     const workbook = XLSX.utils.book_new();
 
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Import Template");
-    XLSX.writeFile(workbook, `billmint_${selectedModule}_template.xlsx`);
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      "Import Template",
+    );
+
+    XLSX.writeFile(
+      workbook,
+      `billmint_${selectedModule}_template.xlsx`,
+    );
 
     setStatus("Excel template downloaded.");
     setErrors([]);
   }
+
+  /* ------------------------------------------------------------------------ */
+  /* Export                                                                   */
+  /* ------------------------------------------------------------------------ */
 
   async function handleExport(): Promise<void> {
     setBusy(true);
@@ -817,63 +905,56 @@ export default function ImportExportPage() {
           ]),
         ];
       } else if (selectedModule === "items") {
-        const items = await fetchAllPages<any>((params) => api.items(params));
+        const items = await fetchAllPages<any>((params) =>
+          api.items(params),
+        );
 
         headers = CSV_HEADERS.items;
 
-        const groupedItems = new Map<string, { item: any; stock: number }>();
+        // Keep every serial-tracked device as a separate row.
+        // Aggregate only non-serialized stock with matching fields.
+        const grouped = new Map<
+          string,
+          { item: any; stock: number }
+        >();
 
         items.forEach((item, index) => {
-          const modelName = item.modelName?.trim() || item.name?.trim() || "";
+          const serialTracked = Boolean(item.trackSerial || item.imei);
 
-          // Never combine individual serial-tracked devices.
-          const isSerialTracked = Boolean(item.trackSerial || item.imei);
-
-          // Combine only records whose other importable fields match.
-          const groupKey = isSerialTracked
+          const key = serialTracked
             ? `serial:${item.id ?? index}`
             : JSON.stringify({
-                modelName,
                 name: item.name,
+                modelName: item.modelName,
                 sku: item.sku,
-                deviceCode: item.deviceCode,
-                barcode: item.barcode,
-                categoryId: item.category?.id,
-                brandId: item.brand?.id,
-                unitId: item.unit?.id,
-                supplierId: item.supplier?.id,
-                description: item.description,
                 purchasePrice: item.purchasePrice,
                 salePrice: item.salePrice,
                 mrp: item.mrp,
                 minimumStock: item.minimumStock,
                 gstRate: item.gstRate,
                 hsnSac: item.hsnSac,
-                discountPercent: item.discountPercent,
-                trackBatch: item.trackBatch,
-                trackSerial: item.trackSerial,
-                trackExpiry: item.trackExpiry,
               });
 
-          const existing = groupedItems.get(groupKey);
+          const existing = grouped.get(key);
 
           if (existing) {
             existing.stock += Number(item.currentStock) || 0;
           } else {
-            groupedItems.set(groupKey, {
+            grouped.set(key, {
               item,
               stock: Number(item.currentStock) || 0,
             });
           }
         });
 
-        rows = Array.from(groupedItems.values()).map(({ item, stock }) => [
+        rows = Array.from(grouped.values()).map(({ item, stock }) => [
           item.name,
           item.modelName ?? item.name,
           item.sku,
           item.deviceCode,
           item.barcode,
           item.imei,
+          item.sourceCode,
           item.category?.id,
           item.brand?.id,
           item.unit?.id,
@@ -892,7 +973,9 @@ export default function ImportExportPage() {
           item.trackExpiry,
         ]);
       } else if (selectedModule === "sale-invoices") {
-        const sales = await fetchAllPages<any>((params) => api.sales(params));
+        const sales = await fetchAllPages<any>((params) =>
+          api.sales(params),
+        );
 
         headers = CSV_HEADERS["sale-invoices"];
 
@@ -939,12 +1022,14 @@ export default function ImportExportPage() {
       }
 
       downloadCsv(
-        `billmint_${selectedModule}_${new Date().toISOString().slice(0, 10)}.csv`,
+        `billmint_${selectedModule}_${new Date()
+          .toISOString()
+          .slice(0, 10)}.csv`,
         toCsv(headers, rows),
       );
 
       setStatus(
-        `Export completed: ${rows.length} records downloaded from your account.`,
+        `Export completed: ${rows.length} records downloaded.`,
       );
     } catch (error) {
       setStatus(
@@ -957,10 +1042,15 @@ export default function ImportExportPage() {
     }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /* Read and preview spreadsheet                                             */
+  /* ------------------------------------------------------------------------ */
+
   async function handleImport(
     event: React.ChangeEvent<HTMLInputElement>,
   ): Promise<void> {
     const file = event.target.files?.[0];
+
     if (!file) return;
 
     setBusy(true);
@@ -972,7 +1062,9 @@ export default function ImportExportPage() {
       const extension = file.name.split(".").pop()?.toLowerCase();
 
       if (!["csv", "xlsx", "xls"].includes(extension ?? "")) {
-        throw new Error("Choose an Excel (.xlsx, .xls) or CSV (.csv) file.");
+        throw new Error(
+          "Choose an Excel (.xlsx, .xls) or CSV (.csv) file.",
+        );
       }
 
       if (file.size > 5 * 1024 * 1024) {
@@ -989,58 +1081,67 @@ export default function ImportExportPage() {
         const workbook = XLSX.read(await file.arrayBuffer(), {
           type: "array",
           cellDates: true,
+          raw: true,
         });
 
         const firstSheetName = workbook.SheetNames[0];
 
         if (!firstSheetName) {
-          throw new Error("The Excel file does not contain a worksheet.");
+          throw new Error("The Excel file has no worksheet.");
         }
 
-        // Read underlying cell values, not formatted display values.
-        grid = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
-          header: 1,
-          defval: "",
-          raw: true,
-        }) as unknown[][];
+        grid = XLSX.utils.sheet_to_json(
+          workbook.Sheets[firstSheetName],
+          {
+            header: 1,
+            defval: "",
+            raw: true,
+          },
+        ) as unknown[][];
       }
 
       const parsed = spreadsheetToObjects(grid);
 
       if (parsed.rows.length > 500) {
-        throw new Error("A maximum of 500 data rows can be imported per file.");
+        throw new Error(
+          "A maximum of 500 data rows can be imported per file.",
+        );
       }
 
       const normalizedHeaders = parsed.headers.map(normalizeHeader);
 
       const itemHeaders = new Set([
         "name",
-        "name of mobile",
-        "imei no",
-        "sku",
-        "barcode",
-        "model name",
-        "device code",
         "item name",
-        "imei number",
-        "imei num",
-        "quantity",
-        "imei",
+        "name of mobile",
+        "product name",
+        "sku",
+        "item code",
         "item number",
         "item no",
-        "item code",
+        "imei",
+        "imei no",
+        "imei no.",
+        "imei number",
+        "imei num",
+        "source code",
+        "quantity",
+        "qty",
         "purchase price",
+        "purchase rate",
+        "cost price",
         "sale price",
+        "selling price",
+        "sell price",
         "mrp",
         "opening stock",
-        "minimum stock",
-        "gst rate",
+        "model name",
+        "model",
+        "barcode",
+        "device code",
         "hsn/sac",
-        "source code",
-        "date of purchase",
-        "purchase date",
-        "remark",
-        "remarks",
+        "hsn",
+        "sac",
       ]);
 
       const partyHeaders = new Set([
@@ -1059,7 +1160,9 @@ export default function ImportExportPage() {
       );
 
       const detectedModule: ModuleType =
-        hasItemHeaders && !hasPartyHeaders ? "items" : selectedModule;
+        hasItemHeaders && !hasPartyHeaders
+          ? "items"
+          : selectedModule;
 
       if (detectedModule !== selectedModule) {
         setSelectedModule(detectedModule);
@@ -1069,14 +1172,35 @@ export default function ImportExportPage() {
         CSV_HEADERS[detectedModule].map(normalizeHeader),
       );
 
-      const itemHeaderAliases = new Set([
+      const aliases = new Set([
         "item name",
         "name of mobile",
-        "imei no",
+        "product name",
         "item code",
+        "item number",
+        "item no",
+        "imei no",
+        "imei no.",
         "imei number",
         "imei num",
+        "source",
+        "source item code",
+        "vendor code",
+        "purchase rate",
+        "cost price",
+        "selling price",
+        "sell price",
+        "maximum retail price",
         "quantity",
+        "qty",
+        "stock",
+        "model",
+        "product model",
+        "hsn",
+        "sac",
+        "min stock",
+        "pincode",
+        "postal code",
       ]);
 
       const ignored = parsed.headers.filter((header) => {
@@ -1084,7 +1208,7 @@ export default function ImportExportPage() {
 
         return (
           !supportedHeaders.has(normalized) &&
-          !(detectedModule === "items" && itemHeaderAliases.has(normalized))
+          !(detectedModule === "items" && aliases.has(normalized))
         );
       });
 
@@ -1094,7 +1218,7 @@ export default function ImportExportPage() {
       setUnsupportedColumns(ignored);
 
       setStatus(
-        `Preview ready: ${parsed.rows.length} data rows and ${parsed.headers.length} columns. Review the data before importing.`,
+        `Preview ready: ${parsed.rows.length} data rows and ${parsed.headers.length} columns. Review before importing.`,
       );
     } catch (error) {
       setStatus(
@@ -1111,6 +1235,10 @@ export default function ImportExportPage() {
     }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /* Confirm import                                                            */
+  /* ------------------------------------------------------------------------ */
+
   async function handleConfirmImport(): Promise<void> {
     if (busy || previewRows.length === 0) return;
 
@@ -1126,7 +1254,7 @@ export default function ImportExportPage() {
         unsupportedColumns.length === previewHeaders.length
       ) {
         throw new Error(
-          "None of the spreadsheet columns match the selected module's supported template. Download the template and use its column headers.",
+          "None of the spreadsheet columns match the selected module.",
         );
       }
 
@@ -1135,8 +1263,9 @@ export default function ImportExportPage() {
 
         if (validationErrors.length > 0) {
           setErrors(validationErrors);
+
           throw new Error(
-            "No items were imported. Correct the highlighted row errors and upload the corrected file again.",
+            "No items were imported. Correct the row errors and upload again.",
           );
         }
       }
@@ -1153,24 +1282,33 @@ export default function ImportExportPage() {
         clearPreview();
       } else {
         setPreviewRows(result.failedRows);
+
         setStatus(
-          `Import finished: ${result.created} created, ${result.failed} failed. Only failed rows remain in the preview, so retrying will not re-import successful rows.`,
+          `Import finished: ${result.created} created, ${result.failed} failed. Only failed rows remain in the preview.`,
         );
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Import failed.");
+      setStatus(
+        error instanceof Error ? error.message : "Import failed.",
+      );
     } finally {
       setBusy(false);
     }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /* UI                                                                        */
+  /* ------------------------------------------------------------------------ */
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
       <header className="border-b px-6 py-5">
-        <h1 className="text-xl font-semibold text-gray-900">Import / Export</h1>
+        <h1 className="text-xl font-semibold text-gray-900">
+          Import / Export
+        </h1>
+
         <p className="mt-1 text-sm text-gray-500">
-          Download real business records or preview and import supported
-          spreadsheet data.
+          Download business records or preview and import spreadsheet data.
         </p>
       </header>
 
@@ -1197,7 +1335,7 @@ export default function ImportExportPage() {
       </div>
 
       <main className="flex-1 overflow-auto p-6">
-        <div className="max-w-3xl space-y-6">
+        <div className="max-w-5xl space-y-6">
           <section>
             <label
               htmlFor="data-module"
@@ -1232,13 +1370,15 @@ export default function ImportExportPage() {
                 <span className="text-3xl">
                   {MODULES.find((item) => item.id === selectedModule)?.icon}
                 </span>
+
                 <div>
                   <h2 className="font-semibold text-gray-900">
                     Export {selectedLabel}
                   </h2>
+
                   <p className="mt-1 text-sm text-gray-500">
-                    Fetches your authenticated business records from the backend
-                    and downloads them as a CSV file.
+                    Fetches your authenticated business records and downloads
+                    them as a CSV file.
                   </p>
                 </div>
               </div>
@@ -1258,20 +1398,19 @@ export default function ImportExportPage() {
                 <h2 className="font-semibold text-gray-900">
                   Import {selectedLabel}
                 </h2>
+
                 <p className="mt-1 text-sm text-gray-500">
-                  Download the template, enter your data without changing the
-                  column headers, then upload a CSV or Excel file to preview it
-                  before importing.
+                  Download a template, enter your data, then upload your Excel
+                  or CSV file to preview it before importing.
                 </p>
               </div>
 
               {selectedModule === "sale-invoices" ||
               selectedModule === "purchase-invoices" ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  Invoice imports are intentionally disabled until a dedicated
-                  backend workflow can validate invoice items, numbering, stock
-                  and accounting balances. You can still export existing
-                  invoices.
+                  Invoice imports are not enabled yet. They require a dedicated
+                  workflow to validate invoice items, numbering, stock and
+                  accounting balances. Export remains available.
                 </div>
               ) : (
                 <>
@@ -1305,9 +1444,8 @@ export default function ImportExportPage() {
                   />
 
                   <p className="text-xs text-gray-500">
-                    Excel (.xlsx, .xls) and CSV supported · Maximum 5 MB and 500
-                    data rows per file. Excel imports read the first worksheet.
-                    Uploaded data is previewed before import.
+                    Excel (.xlsx, .xls) and CSV supported · Maximum 5 MB and
+                    500 data rows per file · First worksheet is read.
                   </p>
                 </>
               )}
@@ -1317,12 +1455,13 @@ export default function ImportExportPage() {
                   {unsupportedColumns.length > 0 && (
                     <div className="border-b border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                       <p className="font-semibold">
-                        Some columns are preview-only and will not be imported.
+                        Unsupported columns detected
                       </p>
+
                       <p className="mt-1">
-                        Unsupported columns: {unsupportedColumns.join(", ")}.
-                        Use the downloaded template headers for fields BillMint
-                        currently supports.
+                        These columns will not be imported:
+                        {" "}
+                        {unsupportedColumns.join(", ")}.
                       </p>
                     </div>
                   )}
@@ -1332,6 +1471,7 @@ export default function ImportExportPage() {
                       <h2 className="font-semibold text-gray-900">
                         Spreadsheet Preview
                       </h2>
+
                       <p className="mt-1 text-sm text-gray-500">
                         {previewFileName} · {previewRows.length} rows ·{" "}
                         {previewHeaders.length} columns
@@ -1388,7 +1528,10 @@ export default function ImportExportPage() {
 
                       <tbody>
                         {previewRows.map((row, rowIndex) => (
-                          <tr key={rowIndex} className="hover:bg-blue-50">
+                          <tr
+                            key={rowIndex}
+                            className="hover:bg-blue-50"
+                          >
                             <td className="border-b border-r px-3 py-2 text-gray-500">
                               {rowIndex + 1}
                             </td>
@@ -1408,9 +1551,8 @@ export default function ImportExportPage() {
                   </div>
 
                   <div className="border-t bg-gray-50 p-3 text-xs text-gray-500">
-                    Review the complete table before importing. Only supported
-                    fields are saved. Any columns marked preview-only are not
-                    stored in BillMint.
+                    Review the spreadsheet before importing. Item imports are
+                    sent to the backend in one bulk request.
                   </div>
                 </section>
               )}
