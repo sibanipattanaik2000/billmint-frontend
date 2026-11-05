@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -16,6 +17,17 @@ interface StockMovement {
   referenceType?: string | null;
   referenceId?: string | null;
   notes?: string | null;
+}
+
+interface InventoryUnit {
+  id: string;
+  itemCode?: string | null;
+  imei?: string | null;
+  serialNumber?: string | null;
+  barcode?: string | null;
+  sourceCode?: string | null;
+  status: string;
+  purchasePrice?: string | number | null;
 }
 
 interface Item {
@@ -41,16 +53,7 @@ interface Item {
   imei?: string | null;
   deviceCode?: string | null;
   sourceStoreCode?: string | null;
-  inventoryUnits?: {
-    id: string;
-    itemCode?: string | null;
-    imei?: string | null;
-    serialNumber?: string | null;
-    barcode?: string | null;
-    sourceCode?: string | null;
-    status: string;
-    purchasePrice?: string | number | null;
-  }[];
+  inventoryUnits?: InventoryUnit[];
 }
 
 function toNumber(value: unknown): number {
@@ -58,7 +61,7 @@ function toNumber(value: unknown): number {
     return Number.isFinite(value) ? value : 0;
   }
 
-  if (typeof value === "string") {
+  if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
   }
@@ -66,10 +69,20 @@ function toNumber(value: unknown): number {
   return 0;
 }
 
+function hasValue(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== "";
+}
+
 function formatINR(value: number): string {
   return value.toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+  });
+}
+
+function formatQuantity(value: number): string {
+  return value.toLocaleString("en-IN", {
+    maximumFractionDigits: 3,
   });
 }
 
@@ -82,7 +95,7 @@ function formatDate(value?: string | Date | null): string {
 
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
-    month: "2-digit",
+    month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
@@ -106,11 +119,89 @@ function movementLabel(movement: StockMovement): string {
   return labels[type] ?? type.replaceAll("_", " ");
 }
 
+function statusLabel(status?: string | null): string {
+  return String(status ?? "ACTIVE").replaceAll("_", " ");
+}
+
+function statusClass(status?: string | null): string {
+  const value = String(status ?? "").toUpperCase();
+
+  switch (value) {
+    case "AVAILABLE":
+    case "ACTIVE":
+    case "RETURNED":
+      return "bg-green-50 text-green-700";
+
+    case "RESERVED":
+    case "IN_TRANSIT":
+      return "bg-amber-50 text-amber-700";
+
+    case "SOLD":
+      return "bg-blue-50 text-blue-700";
+
+    case "DAMAGED":
+    case "LOST":
+    case "INACTIVE":
+      return "bg-red-50 text-red-700";
+
+    default:
+      return "bg-gray-100 text-gray-700";
+  }
+}
+
+function DetailField({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs text-gray-500 mb-1">{label}</p>
+      <div
+        className={`text-sm font-medium text-gray-800 break-words ${
+          mono ? "font-mono" : ""
+        }`}
+      >
+        {value ?? "—"}
+      </div>
+    </div>
+  );
+}
+
+function PriceCard({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description?: string;
+}) {
+  return (
+    <div className="bg-gray-50 rounded-lg p-4 min-w-0">
+      <div className="text-xs font-medium tracking-wide text-gray-500 mb-2">
+        {label}
+      </div>
+      <div className="text-lg font-semibold text-gray-900 break-words">
+        {value}
+      </div>
+      {description && (
+        <p className="text-xs text-gray-500 mt-1">{description}</p>
+      )}
+    </div>
+  );
+}
+
 export default function ItemDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
 
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const rawId = params?.id;
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
 
   const [item, setItem] = useState<Item | null>(null);
   const [loading, setLoading] = useState(true);
@@ -168,8 +259,8 @@ export default function ItemDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-white">
-        <div className="text-gray-500">
+      <div className="flex-1 flex items-center justify-center bg-white min-h-[300px]">
+        <div className="text-sm text-gray-500">
           Loading item details from the server…
         </div>
       </div>
@@ -183,9 +274,10 @@ export default function ItemDetailPage() {
           <h2 className="text-lg font-semibold text-gray-800">
             Unable to load item
           </h2>
+
           <p className="text-sm text-gray-500 mt-2">{error}</p>
 
-          <div className="flex items-center justify-center gap-3 mt-5">
+          <div className="flex flex-wrap items-center justify-center gap-3 mt-5">
             <button
               type="button"
               onClick={() => router.push("/items")}
@@ -224,16 +316,53 @@ export default function ItemDetailPage() {
     );
   }
 
+  const units = item.inventoryUnits ?? [];
+  const movements = item.stockMovements ?? [];
+
   const quantity = toNumber(item.currentStock);
   const salePrice = toNumber(item.salePrice);
   const purchasePrice = toNumber(item.purchasePrice);
-  const stockValue = quantity * purchasePrice;
-  const movements = item.stockMovements ?? [];
+  const mrp = toNumber(item.mrp);
+  const minimumStock = toNumber(item.minimumStock);
+
+  // A missing purchase price means the backend has not supplied cost data.
+  // This also allows branch responses with redacted cost fields to stay private.
+  const canViewPurchasePrice =
+    hasValue(item.purchasePrice) ||
+    units.some((unit) => hasValue(unit.purchasePrice));
+
+  const unitCostTotal = units.reduce((total, unit) => {
+    return hasValue(unit.purchasePrice)
+      ? total + toNumber(unit.purchasePrice)
+      : total;
+  }, 0);
+
+  const stockValue = hasValue(item.purchasePrice)
+    ? quantity * purchasePrice
+    : unitCostTotal;
+
+  const hasStockValue =
+    hasValue(item.purchasePrice) || units.some((unit) => hasValue(unit.purchasePrice));
+
+  const deviceSourceCodes = [
+    ...new Set(
+      units
+        .map((unit) => unit.sourceCode)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+
+  const deviceImeis = units
+    .map((unit) => unit.imei)
+    .filter((value): value is string => Boolean(value));
+
+  const isLowStock =
+    minimumStock > 0 && quantity <= minimumStock;
 
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
-      {/* Header — existing layout retained */}
-      <div className="px-6 py-4 border-b flex items-center justify-between gap-4">
+      {/* HEADER */}
+      <div className="px-4 sm:px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
@@ -245,31 +374,30 @@ export default function ItemDetailPage() {
           </button>
 
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-gray-800 truncate">
+            <h1 className="text-lg sm:text-xl font-semibold text-gray-800 truncate">
               {item.name}
             </h1>
-            {item.sku && (
-              <p className="text-xs text-gray-500 mt-1">
-                Item Code: {item.sku}
-              </p>
-            )}
+
+            <p className="text-xs text-gray-500 mt-1">
+              Item Code: {item.sku || item.deviceCode || "—"}
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() =>
               router.push(`/items/${encodeURIComponent(item.id)}/edit`)
             }
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm font-medium"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-4 py-2 rounded text-xs sm:text-sm font-medium"
           >
             ADJUST ITEM
           </button>
 
           <Link
             href={`/items/${encodeURIComponent(item.id)}/edit`}
-            className="border border-gray-300 hover:bg-gray-50 px-4 py-1.5 rounded text-sm"
+            className="border border-gray-300 hover:bg-gray-50 px-3 sm:px-4 py-2 rounded text-xs sm:text-sm"
           >
             Edit
           </Link>
@@ -282,15 +410,19 @@ export default function ItemDetailPage() {
             aria-label="Refresh item details"
             className="p-2 border rounded hover:bg-gray-50 disabled:opacity-50"
           >
-            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
+            <RefreshCw
+              size={16}
+              className={refreshing ? "animate-spin" : ""}
+            />
           </button>
         </div>
       </div>
 
-      {/* Keep the page usable if refresh fails */}
+      {/* REFRESH ERROR */}
       {error && (
-        <div className="mx-6 mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="mx-4 sm:mx-6 mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           {error}
+
           <button
             type="button"
             onClick={() => void loadItem(true)}
@@ -301,162 +433,323 @@ export default function ItemDetailPage() {
         </div>
       )}
 
-      {/* Content */}
-      <div className="flex-1 overflow-auto p-6">
-        {/* Price & Stock Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <div className="text-sm text-gray-500 mb-1">SALE PRICE</div>
-            <div className="text-lg font-semibold">
-              ₹ {formatINR(salePrice)}
-              <span className="text-sm font-normal text-gray-500 ml-1">
-                (excl)
-              </span>
-            </div>
-          </div>
+      {/* MAIN CONTENT */}
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
+        {/* PRICE AND STOCK CARDS */}
+        <section className="mb-8">
+          <h2 className="font-medium text-gray-700 mb-3">
+            PRICE & STOCK SUMMARY
+          </h2>
 
-          <div className="bg-gray-50 rounded-lg p-4">
-            <div className="text-sm text-gray-500 mb-1">PURCHASE PRICE</div>
-            <div className="text-lg font-semibold">
-              ₹ {formatINR(purchasePrice)}
-              <span className="text-sm font-normal text-gray-500 ml-1">
-                (excl)
-              </span>
-            </div>
-          </div>
+          <div
+            className={`grid grid-cols-1 sm:grid-cols-2 ${
+              canViewPurchasePrice
+                ? "xl:grid-cols-4"
+                : "xl:grid-cols-2"
+            } gap-4`}
+          >
+            <PriceCard
+              label="SALE PRICE"
+              value={`₹ ${formatINR(salePrice)}`}
+              description="Selling price (excluding tax, if applicable)"
+            />
 
-          <div className="bg-gray-50 rounded-lg p-4">
-            <div className="text-sm text-gray-500 mb-1">STOCK QUANTITY</div>
-            <div className="text-lg font-semibold">
-              {quantity.toLocaleString("en-IN")}
-              {item.unit?.shortName ? ` ${item.unit.shortName}` : ""}
+            {hasValue(item.mrp) && (
+              <PriceCard
+                label="MRP"
+                value={`₹ ${formatINR(mrp)}`}
+                description="Maximum retail price"
+              />
+            )}
+
+            <div className="bg-gray-50 rounded-lg p-4 min-w-0">
+              <div className="text-xs font-medium tracking-wide text-gray-500 mb-2">
+                STOCK QUANTITY
+              </div>
+
+              <div className="text-lg font-semibold text-gray-900">
+                {formatQuantity(quantity)}
+                {item.unit?.shortName ? ` ${item.unit.shortName}` : ""}
+              </div>
+
+              {minimumStock > 0 && (
+                <p
+                  className={`text-xs mt-1 ${
+                    isLowStock ? "text-red-600" : "text-gray-500"
+                  }`}
+                >
+                  Minimum stock: {formatQuantity(minimumStock)}
+                  {isLowStock ? " • Low stock" : ""}
+                </p>
+              )}
             </div>
-            {toNumber(item.minimumStock) > 0 && (
-              <p className="text-xs text-gray-500 mt-1">
-                Minimum stock: {toNumber(item.minimumStock)}
-              </p>
+
+            {canViewPurchasePrice && (
+              <>
+                <PriceCard
+                  label="PURCHASE PRICE"
+                  value={
+                    hasValue(item.purchasePrice)
+                      ? `₹ ${formatINR(purchasePrice)}`
+                      : "Device-level cost"
+                  }
+                  description="Purchase cost information"
+                />
+
+                {hasStockValue && (
+                  <PriceCard
+                    label="STOCK VALUE"
+                    value={`₹ ${formatINR(stockValue)}`}
+                    description={
+                      hasValue(item.purchasePrice)
+                        ? "Current stock × purchase price"
+                        : "Total available device-level purchase cost"
+                    }
+                  />
+                )}
+              </>
             )}
           </div>
+        </section>
 
-          <div className="bg-gray-50 rounded-lg p-4">
-            <div className="text-sm text-gray-500 mb-1">STOCK VALUE</div>
-            <div className="text-lg font-semibold">
-              ₹ {formatINR(stockValue)}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Based on current stock × purchase price
-            </p>
-          </div>
-        </div>
+        {/* ITEM DETAILS */}
+        <section className="mb-8">
+          <h2 className="font-medium text-gray-700 mb-3">
+            ITEM DETAILS
+          </h2>
 
-        {/* Item Details */}
-        <div className="mb-8">
-          <h2 className="font-medium text-gray-700 mb-3">ITEM DETAILS</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 border rounded-lg p-4 sm:p-5">
+            <DetailField
+              label="Item Name"
+              value={item.name}
+            />
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 border rounded-lg p-4">
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Item Code</p>
-              <p className="text-sm font-medium">{item.sku || "—"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Device Source Code</p>
-              <p className="text-sm font-medium">
-                {item.inventoryUnits
-                  ?.map((unit) => unit.sourceCode)
-                  .filter(Boolean)
-                  .join(", ") || "—"}
-              </p>
-            </div>
+            <DetailField
+              label="Item Code / SKU"
+              value={item.sku || item.deviceCode || "—"}
+              mono
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Source Store Code</p>
-              <p className="text-sm font-medium">
-                {item.sourceStoreCode || "—"}
-              </p>
-            </div>
+            <DetailField
+              label="Device Source Codes"
+              value={deviceSourceCodes.length > 0
+                ? deviceSourceCodes.join(", ")
+                : "—"}
+              mono
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">IMEI</p>
-              <p className="text-sm font-medium font-mono">
-                {item.inventoryUnits
-                  ?.map((unit) => unit.imei)
-                  .filter(Boolean)
-                  .join(", ") ||
-                  item.imei ||
-                  "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Barcode</p>
-              <p className="text-sm font-medium">{item.barcode || "—"}</p>
-            </div>
+            <DetailField
+              label="Source Store Code"
+              value={item.sourceStoreCode || "—"}
+              mono
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Category</p>
-              <p className="text-sm font-medium">
-                {item.category?.name || "—"}
-              </p>
-            </div>
+            <DetailField
+              label="IMEI"
+              value={
+                deviceImeis.length > 0
+                  ? deviceImeis.join(", ")
+                  : item.imei || "—"
+              }
+              mono
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Brand</p>
-              <p className="text-sm font-medium">{item.brand?.name || "—"}</p>
-            </div>
+            <DetailField
+              label="Barcode"
+              value={item.barcode || "—"}
+              mono
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Unit</p>
-              <p className="text-sm font-medium">
-                {item.unit?.name || item.unit?.shortName || "—"}
-              </p>
-            </div>
+            <DetailField
+              label="Category"
+              value={item.category?.name || "—"}
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Supplier</p>
-              <p className="text-sm font-medium">
-                {item.supplier?.name || "—"}
-              </p>
-            </div>
+            <DetailField
+              label="Brand"
+              value={item.brand?.name || "—"}
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">GST Rate</p>
-              <p className="text-sm font-medium">
-                {item.gstRate != null ? `${toNumber(item.gstRate)}%` : "—"}
-              </p>
-            </div>
+            <DetailField
+              label="Unit"
+              value={item.unit?.name || item.unit?.shortName || "—"}
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">HSN / SAC</p>
-              <p className="text-sm font-medium">{item.hsnSac || "—"}</p>
-            </div>
+            <DetailField
+              label="Supplier"
+              value={item.supplier?.name || "—"}
+            />
 
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Status</p>
-              <p className="text-sm font-medium">
-                {String(item.status ?? "ACTIVE").replaceAll("_", " ")}
-              </p>
-            </div>
+            <DetailField
+              label="GST Rate"
+              value={hasValue(item.gstRate)
+                ? `${toNumber(item.gstRate)}%`
+                : "—"}
+            />
+
+            <DetailField
+              label="HSN / SAC"
+              value={item.hsnSac || "—"}
+              mono
+            />
+
+            <DetailField
+              label="Opening Stock"
+              value={hasValue(item.openingStock)
+                ? formatQuantity(toNumber(item.openingStock))
+                : "—"}
+            />
+
+            <DetailField
+              label="Minimum Stock"
+              value={hasValue(item.minimumStock)
+                ? formatQuantity(minimumStock)
+                : "—"}
+            />
+
+            <DetailField
+              label="Status"
+              value={
+                <span
+                  className={`inline-flex rounded-full px-2 py-1 text-xs ${statusClass(
+                    item.status,
+                  )}`}
+                >
+                  {statusLabel(item.status)}
+                </span>
+              }
+            />
 
             {item.description && (
               <div className="sm:col-span-2 lg:col-span-3">
-                <p className="text-xs text-gray-500 mb-1">Description</p>
-                <p className="text-sm whitespace-pre-wrap">
+                <p className="text-xs text-gray-500 mb-1">
+                  Description
+                </p>
+                <p className="text-sm text-gray-800 whitespace-pre-wrap break-words">
                   {item.description}
                 </p>
               </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* Stock Movements */}
-        <div>
-          <h2 className="font-medium text-gray-700 mb-3">TRANSACTIONS</h2>
+        {/* PHYSICAL DEVICE REGISTER */}
+        <section className="mb-8">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 className="font-medium text-gray-700">
+                PHYSICAL DEVICE REGISTER
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Individual device records linked to this item.
+              </p>
+            </div>
+
+            <span className="text-xs bg-gray-100 text-gray-700 rounded-full px-3 py-1">
+              {units.length} device{units.length === 1 ? "" : "s"}
+            </span>
+          </div>
 
           <div className="border rounded-lg overflow-x-auto">
             <table className="w-full text-sm min-w-[850px]">
               <thead>
                 <tr className="bg-gray-50 border-b text-left text-gray-500">
+                  <th className="py-3 px-4">ITEM CODE</th>
+                  <th className="py-3 px-4">SOURCE CODE</th>
+                  <th className="py-3 px-4">IMEI</th>
+                  <th className="py-3 px-4">SERIAL NUMBER</th>
+                  <th className="py-3 px-4">BARCODE</th>
+                  {canViewPurchasePrice && (
+                    <th className="py-3 px-4 text-right">
+                      PURCHASE PRICE
+                    </th>
+                  )}
+                  <th className="py-3 px-4">STATUS</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {units.length > 0 ? (
+                  units.map((unit) => (
+                    <tr
+                      key={unit.id}
+                      className="border-b last:border-0 hover:bg-gray-50"
+                    >
+                      <td className="py-3 px-4 font-medium">
+                        {unit.itemCode ||
+                          item.deviceCode ||
+                          item.sku ||
+                          "—"}
+                      </td>
+
+                      <td className="py-3 px-4 text-indigo-700 font-medium">
+                        {unit.sourceCode || "—"}
+                      </td>
+
+                      <td className="py-3 px-4 font-mono text-xs">
+                        {unit.imei || "—"}
+                      </td>
+
+                      <td className="py-3 px-4 font-mono text-xs">
+                        {unit.serialNumber || "—"}
+                      </td>
+
+                      <td className="py-3 px-4 font-mono text-xs">
+                        {unit.barcode || "—"}
+                      </td>
+
+                      {canViewPurchasePrice && (
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          {hasValue(unit.purchasePrice)
+                            ? `₹ ${formatINR(toNumber(unit.purchasePrice))}`
+                            : "—"}
+                        </td>
+                      )}
+
+                      <td className="py-3 px-4">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-1 text-xs ${statusClass(
+                            unit.status,
+                          )}`}
+                        >
+                          {statusLabel(unit.status)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td
+                      colSpan={canViewPurchasePrice ? 7 : 6}
+                      className="py-10 text-center text-gray-400"
+                    >
+                      No individual device records available.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* STOCK MOVEMENTS */}
+        <section className="mb-4">
+          <div className="mb-3">
+            <h2 className="font-medium text-gray-700">
+              STOCK MOVEMENTS & TRANSACTIONS
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Stock-in, stock-out, sales, purchases, returns and adjustments.
+            </p>
+          </div>
+
+          <div className="border rounded-lg overflow-x-auto">
+            <table className="w-full text-sm min-w-[900px]">
+              <thead>
+                <tr className="bg-gray-50 border-b text-left text-gray-500">
                   <th className="py-3 px-4">TYPE</th>
-                  <th className="py-3 px-4">REFERENCE</th>
+                  <th className="py-3 px-4">REFERENCE TYPE</th>
+                  <th className="py-3 px-4">REFERENCE ID</th>
                   <th className="py-3 px-4">DETAILS</th>
                   <th className="py-3 px-4">DATE</th>
                   <th className="py-3 px-4 text-right">QTY IN</th>
@@ -468,14 +761,27 @@ export default function ItemDetailPage() {
               <tbody>
                 {movements.length > 0 ? (
                   movements.map((movement) => (
-                    <tr key={movement.id} className="border-b hover:bg-gray-50">
-                      <td className="py-3 px-4">{movementLabel(movement)}</td>
+                    <tr
+                      key={movement.id}
+                      className="border-b last:border-0 hover:bg-gray-50"
+                    >
+                      <td className="py-3 px-4 font-medium">
+                        {movementLabel(movement)}
+                      </td>
 
                       <td className="py-3 px-4">
+                        {movement.referenceType
+                          ? movement.referenceType.replaceAll("_", " ")
+                          : "—"}
+                      </td>
+
+                      <td className="py-3 px-4 font-mono text-xs">
                         {movement.referenceId || "—"}
                       </td>
 
-                      <td className="py-3 px-4">{movement.notes || "—"}</td>
+                      <td className="py-3 px-4 max-w-[260px] whitespace-normal break-words">
+                        {movement.notes || "—"}
+                      </td>
 
                       <td className="py-3 px-4 whitespace-nowrap">
                         {formatDate(movement.date)}
@@ -483,30 +789,29 @@ export default function ItemDetailPage() {
 
                       <td className="py-3 px-4 text-right text-green-700">
                         {toNumber(movement.quantityIn) > 0
-                          ? toNumber(movement.quantityIn).toLocaleString(
-                              "en-IN",
-                            )
+                          ? formatQuantity(toNumber(movement.quantityIn))
                           : "—"}
                       </td>
 
                       <td className="py-3 px-4 text-right text-red-600">
                         {toNumber(movement.quantityOut) > 0
-                          ? toNumber(movement.quantityOut).toLocaleString(
-                              "en-IN",
-                            )
+                          ? formatQuantity(toNumber(movement.quantityOut))
                           : "—"}
                       </td>
 
                       <td className="py-3 px-4 text-right font-medium">
                         {movement.balance != null
-                          ? toNumber(movement.balance).toLocaleString("en-IN")
+                          ? formatQuantity(toNumber(movement.balance))
                           : "—"}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-gray-400">
+                    <td
+                      colSpan={8}
+                      className="py-12 text-center text-gray-400"
+                    >
                       No stock movements have been recorded for this item.
                     </td>
                   </tr>
@@ -516,55 +821,10 @@ export default function ItemDetailPage() {
           </div>
 
           <p className="text-xs text-gray-500 mt-3">
-            Showing up to the latest 50 stock movements returned by the backend.
+            Showing the stock movements returned by the backend. The current
+            API response may be limited to the latest 50 movements.
           </p>
-        </div>
-        {/* PHYSICAL DEVICE REGISTER */}
-        <div className="mb-8">
-          <h2 className="font-medium text-gray-700 mb-3">
-            PHYSICAL DEVICE REGISTER
-          </h2>
-
-          <div className="border rounded-lg overflow-x-auto">
-            <table className="w-full text-sm min-w-[750px]">
-              <thead>
-                <tr className="bg-gray-50 border-b text-left text-gray-500">
-                  <th className="py-3 px-4">ITEM CODE</th>
-                  <th className="py-3 px-4">SOURCE CODE</th>
-                  <th className="py-3 px-4">IMEI</th>
-                  <th className="py-3 px-4">BARCODE</th>
-                  <th className="py-3 px-4">STATUS</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {(item.inventoryUnits ?? []).length > 0 ? (
-                  item.inventoryUnits!.map((unit) => (
-                    <tr key={unit.id} className="border-b last:border-0">
-                      <td className="py-3 px-4 font-medium">
-                        {unit.itemCode || item.deviceCode || item.sku || "—"}
-                      </td>
-                      <td className="py-3 px-4 text-indigo-700 font-medium">
-                        {unit.sourceCode || "—"}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-xs">
-                        {unit.imei || "—"}
-                      </td>
-                      <td className="py-3 px-4">{unit.barcode || "—"}</td>
-                      <td className="py-3 px-4">{unit.status}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5} className="py-8 text-center text-gray-400">
-                      No individual device records available.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        </section>
       </div>
     </div>
   );

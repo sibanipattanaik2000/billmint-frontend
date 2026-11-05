@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useRef, useState } from "react";
@@ -205,9 +204,7 @@ function parseCsv(input: string): string[][] {
     rows.push(row);
   }
 
-  return rows.filter((values) =>
-    values.some((value) => value.trim() !== ""),
-  );
+  return rows.filter((values) => values.some((value) => value.trim() !== ""));
 }
 
 /**
@@ -248,10 +245,7 @@ function spreadsheetToObjects(grid: unknown[][]): {
   const trimmedGrid = grid.map((sourceRow) => {
     const row = [...sourceRow];
 
-    while (
-      row.length > 0 &&
-      String(row[row.length - 1] ?? "").trim() === ""
-    ) {
+    while (row.length > 0 && String(row[row.length - 1] ?? "").trim() === "") {
       row.pop();
     }
 
@@ -268,9 +262,7 @@ function spreadsheetToObjects(grid: unknown[][]): {
     );
   }
 
-  const headers = nonEmptyRows[0].map((value) =>
-    String(value ?? "").trim(),
-  );
+  const headers = nonEmptyRows[0].map((value) => String(value ?? "").trim());
 
   const normalizedHeaders = headers.map(normalizeHeader);
 
@@ -353,17 +345,12 @@ function optionalValue(value: string): string | undefined {
  * ₹12,000
  * 12000.50
  */
-function optionalNumber(
-  row: CsvRow,
-  name: string,
-): number | undefined {
+function optionalNumber(row: CsvRow, name: string): number | undefined {
   const value = getField(row, name).trim();
 
   if (!value) return undefined;
 
-  const normalized = value
-    .replace(/[₹,\s]/g, "")
-    .replace(/^(INR)/i, "");
+  const normalized = value.replace(/[₹,\s]/g, "").replace(/^(INR)/i, "");
 
   const parsed = Number(normalized);
 
@@ -421,10 +408,7 @@ function dateOnly(value: unknown): string {
 }
 
 async function fetchAllPages<T>(
-  fetchPage: (params: {
-    page: number;
-    limit: number;
-  }) => Promise<{
+  fetchPage: (params: { page: number; limit: number }) => Promise<{
     data: T[];
     pagination?: { totalPages?: number };
   }>,
@@ -459,10 +443,7 @@ async function fetchAllPages<T>(
 }
 
 function ensureSupportedImport(module: ModuleType): void {
-  if (
-    module === "sale-invoices" ||
-    module === "purchase-invoices"
-  ) {
+  if (module === "sale-invoices" || module === "purchase-invoices") {
     throw new Error(
       "Invoice import is not enabled yet. Invoice creation requires validated line items, stock and accounting balances. Export is available.",
     );
@@ -496,9 +477,7 @@ function validateItemRows(rows: CsvRow[]): string[] {
       }
 
       if (imei && !/^\d{15}$/.test(imei)) {
-        throw new Error(
-          `IMEI "${imei}" must contain exactly 15 digits.`,
-        );
+        throw new Error(`IMEI "${imei}" must contain exactly 15 digits.`);
       }
 
       if (imei && seenImeis.has(imei)) {
@@ -559,17 +538,14 @@ function validateItemRows(rows: CsvRow[]): string[] {
   return errors;
 }
 
-function buildItemImportPayload(
-  rows: CsvRow[],
-): Record<string, unknown>[] {
+function buildItemImportPayload(rows: CsvRow[]): Record<string, unknown>[] {
   return rows.map((row) => {
     const name = getField(row, "Name").trim();
     const sku = optionalValue(getField(row, "SKU"));
     const imei = optionalValue(getField(row, "IMEI"));
     const sourceCode = optionalValue(getField(row, "Source Code"));
 
-    const modelName =
-      optionalValue(getField(row, "Model Name")) || name;
+    const modelName = optionalValue(getField(row, "Model Name")) || name;
 
     const explicitTrackSerial = getField(row, "Track Serial");
 
@@ -577,9 +553,7 @@ function buildItemImportPayload(
       ? parseBoolean(explicitTrackSerial)
       : Boolean(imei);
 
-    const openingStock = imei
-      ? 1
-      : optionalNumber(row, "Opening Stock") ?? 1;
+    const openingStock = imei ? 1 : (optionalNumber(row, "Opening Stock") ?? 1);
 
     return {
       name,
@@ -588,30 +562,23 @@ function buildItemImportPayload(
       // Excel ITEM CODE is preserved as the item SKU.
       sku: sku || undefined,
 
-      deviceCode:
-        optionalValue(getField(row, "Device Code")) || undefined,
+      deviceCode: optionalValue(getField(row, "Device Code")) || undefined,
 
-      barcode:
-        optionalValue(getField(row, "Barcode")) || undefined,
+      barcode: optionalValue(getField(row, "Barcode")) || undefined,
 
       // These identifiers are separate fields.
       imei: imei || undefined,
       sourceCode: sourceCode || undefined,
 
-      categoryId:
-        optionalValue(getField(row, "Category ID")) || undefined,
+      categoryId: optionalValue(getField(row, "Category ID")) || undefined,
 
-      brandId:
-        optionalValue(getField(row, "Brand ID")) || undefined,
+      brandId: optionalValue(getField(row, "Brand ID")) || undefined,
 
-      unitId:
-        optionalValue(getField(row, "Unit ID")) || undefined,
+      unitId: optionalValue(getField(row, "Unit ID")) || undefined,
 
-      supplierId:
-        optionalValue(getField(row, "Supplier ID")) || undefined,
+      supplierId: optionalValue(getField(row, "Supplier ID")) || undefined,
 
-      description:
-        optionalValue(getField(row, "Description")) || undefined,
+      description: optionalValue(getField(row, "Description")) || undefined,
 
       purchasePrice: optionalNumber(row, "Purchase Price") ?? 0,
       salePrice: optionalNumber(row, "Sale Price") ?? 0,
@@ -622,11 +589,9 @@ function buildItemImportPayload(
 
       gstRate: optionalNumber(row, "GST Rate") ?? 18,
 
-      hsnSac:
-        optionalValue(getField(row, "HSN/SAC")) || undefined,
+      hsnSac: optionalValue(getField(row, "HSN/SAC")) || undefined,
 
-      discountPercent:
-        optionalNumber(row, "Discount Percent") ?? 0,
+      discountPercent: optionalNumber(row, "Discount Percent") ?? 0,
 
       trackBatch: parseBoolean(getField(row, "Track Batch")),
       trackSerial,
@@ -656,8 +621,7 @@ async function importRows(
     // One request for the entire spreadsheet, not one request per row.
     const response = await api.bulkCreateItems(items);
 
-    const bulkResult =
-      response.data as BulkImportResponse;
+    const bulkResult = response.data as BulkImportResponse;
 
     result.created = Number(bulkResult.created) || 0;
     result.failed = Number(bulkResult.failed) || 0;
@@ -667,10 +631,7 @@ async function importRows(
 
       const originalIndex = entry.row - 2;
 
-      if (
-        originalIndex >= 0 &&
-        originalIndex < rows.length
-      ) {
+      if (originalIndex >= 0 && originalIndex < rows.length) {
         result.failedRows.push(rows[originalIndex]);
       }
 
@@ -712,8 +673,7 @@ async function importRows(
           pinCode: optionalValue(getField(row, "PIN Code")),
           gstin: optionalValue(getField(row, "GSTIN")),
           pan: optionalValue(getField(row, "PAN")),
-          openingBalance:
-            optionalNumber(row, "Opening Balance") ?? 0,
+          openingBalance: optionalNumber(row, "Opening Balance") ?? 0,
           notes: optionalValue(getField(row, "Notes")),
         };
 
@@ -734,9 +694,7 @@ async function importRows(
         const description = optionalValue(getField(row, "Description"));
 
         if (!category && !description) {
-          throw new Error(
-            "Provide a Category or Description for the expense.",
-          );
+          throw new Error("Provide a Category or Description for the expense.");
         }
 
         await api.createExpense({
@@ -744,8 +702,7 @@ async function importRows(
           date,
           category,
           description,
-          paymentMethod:
-            optionalValue(getField(row, "Payment Method")) ?? "",
+          paymentMethod: optionalValue(getField(row, "Payment Method")) ?? "",
           notes: optionalValue(getField(row, "Notes")),
         });
       }
@@ -754,8 +711,7 @@ async function importRows(
     } catch (error) {
       result.failed += 1;
 
-      const message =
-        error instanceof Error ? error.message : "Unknown error";
+      const message = error instanceof Error ? error.message : "Unknown error";
 
       result.errors.push(`Row ${rowNumber}: ${message}`);
       result.failedRows.push(row);
@@ -771,8 +727,7 @@ async function importRows(
 
 export default function ImportExportPage() {
   const [activeTab, setActiveTab] = useState<TabType>("export");
-  const [selectedModule, setSelectedModule] =
-    useState<ModuleType>("parties");
+  const [selectedModule, setSelectedModule] = useState<ModuleType>("parties");
 
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -829,22 +784,13 @@ export default function ImportExportPage() {
       return;
     }
 
-    const worksheet = XLSX.utils.aoa_to_sheet([
-      CSV_HEADERS[selectedModule],
-    ]);
+    const worksheet = XLSX.utils.aoa_to_sheet([CSV_HEADERS[selectedModule]]);
 
     const workbook = XLSX.utils.book_new();
 
-    XLSX.utils.book_append_sheet(
-      workbook,
-      worksheet,
-      "Import Template",
-    );
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Import Template");
 
-    XLSX.writeFile(
-      workbook,
-      `billmint_${selectedModule}_template.xlsx`,
-    );
+    XLSX.writeFile(workbook, `billmint_${selectedModule}_template.xlsx`);
 
     setStatus("Excel template downloaded.");
     setErrors([]);
@@ -905,18 +851,13 @@ export default function ImportExportPage() {
           ]),
         ];
       } else if (selectedModule === "items") {
-        const items = await fetchAllPages<any>((params) =>
-          api.items(params),
-        );
+        const items = await fetchAllPages<any>((params) => api.items(params));
 
         headers = CSV_HEADERS.items;
 
         // Keep every serial-tracked device as a separate row.
         // Aggregate only non-serialized stock with matching fields.
-        const grouped = new Map<
-          string,
-          { item: any; stock: number }
-        >();
+        const grouped = new Map<string, { item: any; stock: number }>();
 
         items.forEach((item, index) => {
           const serialTracked = Boolean(item.trackSerial || item.imei);
@@ -947,35 +888,92 @@ export default function ImportExportPage() {
           }
         });
 
-        rows = Array.from(grouped.values()).map(({ item, stock }) => [
-          item.name,
-          item.modelName ?? item.name,
-          item.sku,
-          item.deviceCode,
-          item.barcode,
-          item.imei,
-          item.sourceCode,
-          item.category?.id,
-          item.brand?.id,
-          item.unit?.id,
-          item.supplier?.id,
-          item.description,
-          item.purchasePrice,
-          item.salePrice,
-          item.mrp,
-          stock,
-          item.minimumStock,
-          item.gstRate,
-          item.hsnSac,
-          item.discountPercent,
-          item.trackBatch,
-          item.trackSerial,
-          item.trackExpiry,
-        ]);
+        const exportRows: unknown[][] = [];
+
+        for (const item of items) {
+          const units = Array.isArray(item.inventoryUnits)
+            ? item.inventoryUnits
+            : [];
+
+          if (item.trackSerial || units.length > 0) {
+            const deviceUnits = units.length
+              ? units
+              : [
+                  {
+                    itemCode: item.deviceCode || item.sku,
+                    imei: item.imei,
+                    barcode: item.barcode,
+                    sourceCode: "",
+                    status: "AVAILABLE",
+                  },
+                ];
+
+            for (const unit of deviceUnits) {
+              const available =
+                unit.status === "AVAILABLE" || unit.status === "RETURNED";
+
+              exportRows.push([
+                item.name,
+                item.modelName ?? item.name,
+                item.sku,
+                unit.itemCode ?? item.deviceCode,
+                unit.barcode ?? item.barcode,
+                unit.imei ?? item.imei,
+                unit.sourceCode,
+                unit.status,
+                item.category?.id,
+                item.brand?.id,
+                item.unit?.id,
+                item.supplier?.id,
+                item.description,
+                unit.purchasePrice ?? item.purchasePrice,
+                item.salePrice,
+                item.mrp,
+                available ? 1 : 0,
+                item.minimumStock,
+                item.gstRate,
+                item.hsnSac,
+                item.discountPercent,
+                item.trackBatch,
+                true,
+                item.trackExpiry,
+              ]);
+            }
+
+            continue;
+          }
+
+          exportRows.push([
+            item.name,
+            item.modelName ?? item.name,
+            item.sku,
+            item.deviceCode,
+            item.barcode,
+            item.imei,
+            "",
+            "",
+            item.category?.id,
+            item.brand?.id,
+            item.unit?.id,
+            item.supplier?.id,
+            item.description,
+            item.purchasePrice,
+            item.salePrice,
+            item.mrp,
+            item.currentStock,
+            item.minimumStock,
+            item.gstRate,
+            item.hsnSac,
+            item.discountPercent,
+            item.trackBatch,
+            item.trackSerial,
+            item.trackExpiry,
+          ]);
+        }
+
+        rows = exportRows;
       } else if (selectedModule === "sale-invoices") {
-        const sales = await fetchAllPages<any>((params) =>
-          api.sales(params),
-        );
+        const sales = await fetchAllPages<any>((params) => api.sales(params));
 
         headers = CSV_HEADERS["sale-invoices"];
 
@@ -1028,9 +1026,7 @@ export default function ImportExportPage() {
         toCsv(headers, rows),
       );
 
-      setStatus(
-        `Export completed: ${rows.length} records downloaded.`,
-      );
+      setStatus(`Export completed: ${rows.length} records downloaded.`);
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -1062,9 +1058,7 @@ export default function ImportExportPage() {
       const extension = file.name.split(".").pop()?.toLowerCase();
 
       if (!["csv", "xlsx", "xls"].includes(extension ?? "")) {
-        throw new Error(
-          "Choose an Excel (.xlsx, .xls) or CSV (.csv) file.",
-        );
+        throw new Error("Choose an Excel (.xlsx, .xls) or CSV (.csv) file.");
       }
 
       if (file.size > 5 * 1024 * 1024) {
@@ -1090,22 +1084,17 @@ export default function ImportExportPage() {
           throw new Error("The Excel file has no worksheet.");
         }
 
-        grid = XLSX.utils.sheet_to_json(
-          workbook.Sheets[firstSheetName],
-          {
-            header: 1,
-            defval: "",
-            raw: true,
-          },
-        ) as unknown[][];
+        grid = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
+          header: 1,
+          defval: "",
+          raw: true,
+        }) as unknown[][];
       }
 
       const parsed = spreadsheetToObjects(grid);
 
       if (parsed.rows.length > 500) {
-        throw new Error(
-          "A maximum of 500 data rows can be imported per file.",
-        );
+        throw new Error("A maximum of 500 data rows can be imported per file.");
       }
 
       const normalizedHeaders = parsed.headers.map(normalizeHeader);
@@ -1160,9 +1149,7 @@ export default function ImportExportPage() {
       );
 
       const detectedModule: ModuleType =
-        hasItemHeaders && !hasPartyHeaders
-          ? "items"
-          : selectedModule;
+        hasItemHeaders && !hasPartyHeaders ? "items" : selectedModule;
 
       if (detectedModule !== selectedModule) {
         setSelectedModule(detectedModule);
@@ -1288,9 +1275,7 @@ export default function ImportExportPage() {
         );
       }
     } catch (error) {
-      setStatus(
-        error instanceof Error ? error.message : "Import failed.",
-      );
+      setStatus(error instanceof Error ? error.message : "Import failed.");
     } finally {
       setBusy(false);
     }
@@ -1303,9 +1288,7 @@ export default function ImportExportPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
       <header className="border-b px-6 py-5">
-        <h1 className="text-xl font-semibold text-gray-900">
-          Import / Export
-        </h1>
+        <h1 className="text-xl font-semibold text-gray-900">Import / Export</h1>
 
         <p className="mt-1 text-sm text-gray-500">
           Download business records or preview and import spreadsheet data.
@@ -1444,8 +1427,8 @@ export default function ImportExportPage() {
                   />
 
                   <p className="text-xs text-gray-500">
-                    Excel (.xlsx, .xls) and CSV supported · Maximum 5 MB and
-                    500 data rows per file · First worksheet is read.
+                    Excel (.xlsx, .xls) and CSV supported · Maximum 5 MB and 500
+                    data rows per file · First worksheet is read.
                   </p>
                 </>
               )}
@@ -1459,8 +1442,7 @@ export default function ImportExportPage() {
                       </p>
 
                       <p className="mt-1">
-                        These columns will not be imported:
-                        {" "}
+                        These columns will not be imported:{" "}
                         {unsupportedColumns.join(", ")}.
                       </p>
                     </div>
@@ -1528,10 +1510,7 @@ export default function ImportExportPage() {
 
                       <tbody>
                         {previewRows.map((row, rowIndex) => (
-                          <tr
-                            key={rowIndex}
-                            className="hover:bg-blue-50"
-                          >
+                          <tr key={rowIndex} className="hover:bg-blue-50">
                             <td className="border-b border-r px-3 py-2 text-gray-500">
                               {rowIndex + 1}
                             </td>

@@ -367,6 +367,7 @@ export default function ItemsPage() {
             item.brand?.name,
             ...(item.inventoryUnits ?? []).map((unit) => unit.itemCode),
             ...(item.inventoryUnits ?? []).map((unit) => unit.imei),
+            ...(item.inventoryUnits ?? []).map((unit) => unit.sourceCode),
           ].some((value) =>
             String(value ?? "")
               .toLowerCase()
