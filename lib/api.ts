@@ -122,21 +122,19 @@ export const api = {
      AUTH
   ======================================================= */
 
-  login: (
-    storeCode: string,
-    userId: string,
-    password: string,
-    rememberMe = false,
-  ) =>
-    request<ApiSuccess<any>>("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({
-        storeCode,
-        userId,
-        password,
-        rememberMe,
-      }),
+ login: (
+  email: string,
+  password: string,
+  rememberMe = false,
+) =>
+  request<ApiSuccess<any>>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({
+      email: email.trim().toLowerCase(),
+      password,
+      rememberMe,
     }),
+  }),
   storeByCode: (storeCode: string) =>
     request<
       ApiSuccess<{

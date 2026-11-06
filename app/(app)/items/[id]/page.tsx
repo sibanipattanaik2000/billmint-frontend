@@ -824,7 +824,7 @@ export default function ItemDetailPage() {
             Showing the stock movements returned by the backend. The current
             API response may be limited to the latest 50 movements.
           </p>
-        </section>
+        </section>  
       </div>
     </div>
   );
