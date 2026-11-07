@@ -1,18 +1,51 @@
- 'use client';
 
-import { useState, FormEvent } from 'react';
+'use client';
+
+import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { Receipt, Copy, CheckCircle2 } from 'lucide-react';
 
+type RegisterForm = {
+  businessName: string;
+  ownerName: string;
+  password: string;
+  confirmPassword: string;
+  email: string;
+  phone: string;
+  city: string;
+  state: string;
+  pinCode: string;
+  gstin: string;
+};
+
+type RegisterResponse = {
+  success?: boolean;
+  data?: {
+    token?: string;
+    user?: unknown;
+    business?: {
+      id?: string;
+      name?: string;
+      storeCode?: string;
+    };
+  };
+  token?: string;
+  user?: unknown;
+  business?: {
+    id?: string;
+    name?: string;
+    storeCode?: string;
+  };
+};
+
 export default function RegisterPage() {
   const router = useRouter();
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<RegisterForm>({
     businessName: '',
     ownerName: '',
-    userId: '',
     password: '',
     confirmPassword: '',
     email: '',
@@ -29,14 +62,27 @@ export default function RegisterPage() {
   const [storeCode, setStoreCode] = useState('');
   const [copied, setCopied] = useState(false);
 
-  function update(field: string, value: string) {
+  function update(field: keyof RegisterForm, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
+
+    setFieldErrors((current) => {
+      const updated = { ...current };
+      delete updated[field];
+      return updated;
+    });
   }
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError('');
     setFieldErrors({});
+
+    const normalizedEmail = form.email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      setFieldErrors({ email: 'Email address is required.' });
+      return;
+    }
 
     if (form.password !== form.confirmPassword) {
       setFieldErrors({ confirmPassword: 'Passwords do not match.' });
@@ -46,38 +92,44 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const result = await api.register(form) as {
-        storeCode?: string;
-        business?: { storeCode?: string };
-        data?: { storeCode?: string; business?: { storeCode?: string } };
-      };
+      const response = await api.register({
+        businessName: form.businessName.trim(),
+        ownerName: form.ownerName.trim(),
+        email: normalizedEmail,
+        password: form.password,
+        confirmPassword: form.confirmPassword,
+        phone: form.phone.trim(),
+        city: form.city.trim(),
+        state: form.state.trim(),
+        pinCode: form.pinCode.trim(),
+        gstin: form.gstin.trim().toUpperCase(),
+      }) as RegisterResponse;
 
-      const generatedCode =
-        result?.storeCode ??
-        result?.business?.storeCode ??
-        result?.data?.storeCode ??
-        result?.data?.business?.storeCode ??
-        '';
+      const result = response?.data ?? response;
+      const generatedCode = result?.business?.storeCode ?? '';
 
       if (generatedCode) {
         setStoreCode(generatedCode);
-      } else {
-        // Registration may succeed even if the API does not return the code.
-        router.push('/dashboard');
+        return;
       }
+
+      // Registration sets the authentication cookie on success.
+      router.replace('/dashboard');
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
 
-        if (err.errors) {
+        if (err.errors?.length) {
           const errors: Record<string, string> = {};
+
           err.errors.forEach((item) => {
             errors[item.field] = item.message;
           });
+
           setFieldErrors(errors);
         }
       } else {
-        setError('Unable to connect to server.');
+        setError('Unable to connect to the BillMint server.');
       }
     } finally {
       setLoading(false);
@@ -96,26 +148,69 @@ export default function RegisterPage() {
   }
 
   const fields: {
-    key: keyof typeof form;
+    key: keyof RegisterForm;
     label: string;
     type?: string;
     required?: boolean;
+    autoComplete?: string;
   }[] = [
-    { key: 'businessName', label: 'Business Name', required: true },
-    { key: 'ownerName', label: 'Owner Name', required: true },
-    { key: 'userId', label: 'User ID (for login)', required: true },
-    { key: 'password', label: 'Password', type: 'password', required: true },
-    { key: 'confirmPassword', label: 'Confirm Password', type: 'password', required: true },
-    { key: 'email', label: 'Email', type: 'email' },
-    { key: 'phone', label: 'Phone' },
-    { key: 'city', label: 'City' },
-    { key: 'state', label: 'State' },
-    { key: 'pinCode', label: 'PIN Code' },
-    { key: 'gstin', label: 'GSTIN (optional)' },
+    {
+      key: 'businessName',
+      label: 'Business Name',
+      required: true,
+    },
+    {
+      key: 'ownerName',
+      label: 'Owner Name',
+      required: true,
+    },
+    {
+      key: 'email',
+      label: 'Email Address',
+      type: 'email',
+      required: true,
+      autoComplete: 'email',
+    },
+    {
+      key: 'password',
+      label: 'Password',
+      type: 'password',
+      required: true,
+      autoComplete: 'new-password',
+    },
+    {
+      key: 'confirmPassword',
+      label: 'Confirm Password',
+      type: 'password',
+      required: true,
+      autoComplete: 'new-password',
+    },
+    {
+      key: 'phone',
+      label: 'Phone Number',
+      type: 'tel',
+      autoComplete: 'tel',
+    },
+    {
+      key: 'city',
+      label: 'City',
+    },
+    {
+      key: 'state',
+      label: 'State',
+    },
+    {
+      key: 'pinCode',
+      label: 'PIN Code',
+    },
+    {
+      key: 'gstin',
+      label: 'GSTIN (optional)',
+    },
   ];
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+    <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 bg-slate-50">
       <div className="w-full max-w-lg">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-9 h-9 rounded-lg bg-brand-600 text-white flex items-center justify-center">
@@ -124,35 +219,43 @@ export default function RegisterPage() {
           <span className="text-xl font-bold">BillMint</span>
         </div>
 
-        <div className="card p-6">
+        <div className="card p-4 sm:p-6">
           {storeCode ? (
             <div className="text-center">
               <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-3" />
+
               <h1 className="text-xl font-bold text-slate-900 mb-2">
                 Business registered successfully!
               </h1>
+
               <p className="text-sm text-slate-500 mb-5">
-                Save this Store Code. You will need it whenever you log in to this store.
+                Your account is registered. You can log in using your email
+                address and password. This Store Code is only an internal
+                business reference.
               </p>
 
               <div className="rounded-xl border border-brand-200 bg-brand-50 p-4 mb-5">
-                <p className="text-xs text-slate-500 mb-2">Your Store Code</p>
+                <p className="text-xs text-slate-500 mb-2">
+                  Internal Store Reference
+                </p>
+
                 <p className="text-2xl font-bold tracking-widest text-brand-700 break-all">
                   {storeCode}
                 </p>
+
                 <button
                   type="button"
                   onClick={copyStoreCode}
                   className="btn-primary mt-3 inline-flex items-center justify-center gap-2 px-4 py-2"
                 >
                   <Copy className="w-4 h-4" />
-                  {copied ? 'Copied' : 'Copy Store Code'}
+                  {copied ? 'Copied' : 'Copy Reference'}
                 </button>
               </div>
 
               <button
                 type="button"
-                onClick={() => router.push('/dashboard')}
+                onClick={() => router.replace('/dashboard')}
                 className="btn-primary w-full py-2.5"
               >
                 Continue to Dashboard
@@ -163,13 +266,17 @@ export default function RegisterPage() {
               <h1 className="text-xl font-bold text-slate-900 mb-1">
                 Register your business
               </h1>
+
               <p className="text-sm text-slate-500 mb-6">
-                Create an owner account and start managing your business.
+                Create your owner account using your email address and password.
               </p>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 {error && (
-                  <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm">
+                  <div
+                    role="alert"
+                    className="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm"
+                  >
                     {error}
                   </div>
                 )}
@@ -179,30 +286,39 @@ export default function RegisterPage() {
                     <div
                       key={field.key}
                       className={
-                        field.key === 'businessName' || field.key === 'gstin'
-                          ? 'sm:col-span-2'
-                          : ''
+                        field.key === 'businessName' ||
+                        field.key === 'email' ||
+                        field.key === 'gstin'
+                          ? 'sm:col-span-2 min-w-0'
+                          : 'min-w-0'
                       }
                     >
-                      <label className="label">
+                      <label className="label" htmlFor={field.key}>
                         {field.label}
-                        {field.required && <span className="text-red-500"> *</span>}
+                        {field.required && (
+                          <span className="text-red-500"> *</span>
+                        )}
                       </label>
 
                       <input
-                        className="input"
+                        id={field.key}
+                        name={field.key}
+                        className="input w-full min-w-0"
                         type={field.type || 'text'}
                         value={form[field.key]}
-                        onChange={(e) => update(field.key, e.target.value)}
+                        onChange={(e) =>
+                          update(field.key, e.target.value)
+                        }
                         required={field.required}
-                        autoComplete={
-                          field.key === 'password'
-                            ? 'new-password'
-                            : field.key === 'confirmPassword'
-                              ? 'new-password'
+                        autoComplete={field.autoComplete || 'off'}
+                        maxLength={
+                          field.key === 'businessName'
+                            ? 200
+                            : field.key === 'ownerName'
+                              ? 100
                               : field.key === 'email'
-                                ? 'email'
-                                : 'off'
+                                ? 254
+                                : undefined
                         }
                       />
 
@@ -217,7 +333,7 @@ export default function RegisterPage() {
 
                 <button
                   type="submit"
-                  className="btn-primary w-full py-2.5"
+                  className="btn-primary w-full py-2.5 disabled:opacity-60"
                   disabled={loading}
                 >
                   {loading ? 'Creating account...' : 'Create Account'}
