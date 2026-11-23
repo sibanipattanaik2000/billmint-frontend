@@ -544,20 +544,22 @@ export default function StockTransfersPage() {
         </div>
       </form>
 
-      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section
+        id="pending-items"
+        className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
+        {" "}
         <div className="flex items-center gap-2">
           <ScanBarcode className="h-5 w-5 text-slate-600" />
           <div>
-            <h2 className="font-semibold text-slate-900">
-              Pending device receipts
-            </h2>
+            <h2 className="font-semibold text-slate-900">Pending Items</h2>
             <p className="text-xs text-slate-500">
-              Available to the destination store. Enter or scan each device's
-              barcode to confirm receipt.
+              Items dispatched by another branch appear here. Check the item
+              details, enter or scan the receiving branch's barcode, and confirm
+              receipt.
             </p>
           </div>
         </div>
-
         {pendingTransfers.length === 0 ? (
           <p className="rounded-lg bg-slate-50 p-5 text-sm text-slate-500">
             No pending transfers are waiting for receipt by this store.

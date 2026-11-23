@@ -73,7 +73,11 @@ const nav = [
       { href: "/items", label: "All Items" },
       { href: "/items/stock", label: "Stock Summary" },
       { href: "/items/shelves", label: "Shelves" },
-      { href: "/stock-transfers", label: "Stock Transfers" },
+      { href: "/stock-transfers", label: "Transfer Stock" },
+      {
+        href: "/stock-transfers#pending-items",
+        label: "Pending Items",
+      },
     ],
   },
   { href: "/expenses", label: "Expenses", icon: Wallet },
