@@ -46,6 +46,23 @@ type TransferUnit = {
   };
 };
 
+type TransferItemDetails = {
+  id: string;
+  name: string;
+  sku?: string | null;
+  modelName?: string | null;
+  description?: string | null;
+  hsnSac?: string | null;
+  gstRate?: number | string | null;
+  imageUrl?: string | null;
+  category?: { name: string } | null;
+  brand?: { name: string } | null;
+  unit?: {
+    name: string;
+    shortName?: string | null;
+  } | null;
+};
+
 type Transfer = {
   id: string;
   transferNumber: string;
@@ -55,12 +72,14 @@ type Transfer = {
   receivedAt?: string | null;
   fromBusiness?: { name: string; storeCode: string };
   toBusiness?: { name: string; storeCode: string };
+
   items: Array<{
     quantity: number | string;
-    sourceItem?: { id: string; name: string; sku?: string | null };
-    destinationItem?: { id: string; name: string; sku?: string | null };
+    sourceItem?: TransferItemDetails;
+    destinationItem?: TransferItemDetails;
     transferUnits: TransferUnit[];
   }>;
+
   isIncoming?: boolean;
   isOutgoing?: boolean;
 };
@@ -259,11 +278,15 @@ export default function StockTransfersPage() {
     return (transfer.items || []).flatMap((item) =>
       (item.transferUnits || [])
         .filter((unit) => unit.status === "PENDING")
-        .map((unit) => ({
-          ...unit,
-          itemName:
-            item.destinationItem?.name || item.sourceItem?.name || "Device",
-        })),
+        .map((unit) => {
+          const itemDetails = item.destinationItem || item.sourceItem;
+
+          return {
+            ...unit,
+            itemDetails,
+            itemName: itemDetails?.modelName || itemDetails?.name || "Device",
+          };
+        }),
     );
   }
 
@@ -627,9 +650,59 @@ export default function StockTransfersPage() {
                                   aria-label={`Receive ${unit.inventoryUnit.imei || unit.id}`}
                                 />
                               </td>
-                              <td className="px-3 py-3 font-medium text-slate-800">
-                                {unit.itemName}
+
+                              <td className="px-3 py-3 text-slate-800">
+                                <div className="font-semibold">
+                                  {unit.itemName}
+                                </div>
+
+                                {unit.itemDetails && (
+                                  <div className="mt-1 space-y-1 text-xs font-normal text-slate-500">
+                                    {unit.itemDetails.brand?.name && (
+                                      <div>
+                                        Brand: {unit.itemDetails.brand.name}
+                                      </div>
+                                    )}
+
+                                    {unit.itemDetails.category?.name && (
+                                      <div>
+                                        Category:{" "}
+                                        {unit.itemDetails.category.name}
+                                      </div>
+                                    )}
+
+                                    {unit.itemDetails.sku && (
+                                      <div>SKU: {unit.itemDetails.sku}</div>
+                                    )}
+
+                                    {unit.itemDetails.description && (
+                                      <div>{unit.itemDetails.description}</div>
+                                    )}
+
+                                    {unit.itemDetails.hsnSac && (
+                                      <div>
+                                        HSN/SAC: {unit.itemDetails.hsnSac}
+                                      </div>
+                                    )}
+
+                                    {unit.itemDetails.gstRate != null && (
+                                      <div>
+                                        GST: {unit.itemDetails.gstRate}%
+                                      </div>
+                                    )}
+
+                                    {unit.itemDetails.unit?.name && (
+                                      <div>
+                                        Unit: {unit.itemDetails.unit.name}
+                                        {unit.itemDetails.unit.shortName
+                                          ? ` (${unit.itemDetails.unit.shortName})`
+                                          : ""}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </td>
+
                               <td className="px-3 py-3 font-mono text-slate-700">
                                 {unit.inventoryUnit.imei || "—"}
                               </td>
