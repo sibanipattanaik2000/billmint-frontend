@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -342,22 +341,19 @@ export default function ItemDetailPage() {
     : unitCostTotal;
 
   const hasStockValue =
-    hasValue(item.purchasePrice) || units.some((unit) => hasValue(unit.purchasePrice));
+    hasValue(item.purchasePrice) ||
+    units.some((unit) => hasValue(unit.purchasePrice));
 
-  const deviceSourceCodes = [
-    ...new Set(
-      units
-        .map((unit) => unit.sourceCode)
-        .filter((value): value is string => Boolean(value)),
-    ),
-  ];
+  const deviceSourceCodes = units
+    .map((unit) => unit.sourceCode)
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, array) => array.indexOf(value) === index);
 
   const deviceImeis = units
     .map((unit) => unit.imei)
     .filter((value): value is string => Boolean(value));
 
-  const isLowStock =
-    minimumStock > 0 && quantity <= minimumStock;
+  const isLowStock = minimumStock > 0 && quantity <= minimumStock;
 
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
@@ -410,10 +406,7 @@ export default function ItemDetailPage() {
             aria-label="Refresh item details"
             className="p-2 border rounded hover:bg-gray-50 disabled:opacity-50"
           >
-            <RefreshCw
-              size={16}
-              className={refreshing ? "animate-spin" : ""}
-            />
+            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
           </button>
         </div>
       </div>
@@ -443,9 +436,7 @@ export default function ItemDetailPage() {
 
           <div
             className={`grid grid-cols-1 sm:grid-cols-2 ${
-              canViewPurchasePrice
-                ? "xl:grid-cols-4"
-                : "xl:grid-cols-2"
+              canViewPurchasePrice ? "xl:grid-cols-4" : "xl:grid-cols-2"
             } gap-4`}
           >
             <PriceCard
@@ -514,15 +505,10 @@ export default function ItemDetailPage() {
 
         {/* ITEM DETAILS */}
         <section className="mb-8">
-          <h2 className="font-medium text-gray-700 mb-3">
-            ITEM DETAILS
-          </h2>
+          <h2 className="font-medium text-gray-700 mb-3">ITEM DETAILS</h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 border rounded-lg p-4 sm:p-5">
-            <DetailField
-              label="Item Name"
-              value={item.name}
-            />
+            <DetailField label="Item Name" value={item.name} />
 
             <DetailField
               label="Item Code / SKU"
@@ -532,9 +518,11 @@ export default function ItemDetailPage() {
 
             <DetailField
               label="Device Source Codes"
-              value={deviceSourceCodes.length > 0
-                ? deviceSourceCodes.join(", ")
-                : "—"}
+              value={
+                deviceSourceCodes.length > 0
+                  ? deviceSourceCodes.join(", ")
+                  : "—"
+              }
               mono
             />
 
@@ -554,57 +542,42 @@ export default function ItemDetailPage() {
               mono
             />
 
-            <DetailField
-              label="Barcode"
-              value={item.barcode || "—"}
-              mono
-            />
+            <DetailField label="Barcode" value={item.barcode || "—"} mono />
 
-            <DetailField
-              label="Category"
-              value={item.category?.name || "—"}
-            />
+            <DetailField label="Category" value={item.category?.name || "—"} />
 
-            <DetailField
-              label="Brand"
-              value={item.brand?.name || "—"}
-            />
+            <DetailField label="Brand" value={item.brand?.name || "—"} />
 
             <DetailField
               label="Unit"
               value={item.unit?.name || item.unit?.shortName || "—"}
             />
 
-            <DetailField
-              label="Supplier"
-              value={item.supplier?.name || "—"}
-            />
+            <DetailField label="Supplier" value={item.supplier?.name || "—"} />
 
             <DetailField
               label="GST Rate"
-              value={hasValue(item.gstRate)
-                ? `${toNumber(item.gstRate)}%`
-                : "—"}
+              value={
+                hasValue(item.gstRate) ? `${toNumber(item.gstRate)}%` : "—"
+              }
             />
 
-            <DetailField
-              label="HSN / SAC"
-              value={item.hsnSac || "—"}
-              mono
-            />
+            <DetailField label="HSN / SAC" value={item.hsnSac || "—"} mono />
 
             <DetailField
               label="Opening Stock"
-              value={hasValue(item.openingStock)
-                ? formatQuantity(toNumber(item.openingStock))
-                : "—"}
+              value={
+                hasValue(item.openingStock)
+                  ? formatQuantity(toNumber(item.openingStock))
+                  : "—"
+              }
             />
 
             <DetailField
               label="Minimum Stock"
-              value={hasValue(item.minimumStock)
-                ? formatQuantity(minimumStock)
-                : "—"}
+              value={
+                hasValue(item.minimumStock) ? formatQuantity(minimumStock) : "—"
+              }
             />
 
             <DetailField
@@ -622,9 +595,7 @@ export default function ItemDetailPage() {
 
             {item.description && (
               <div className="sm:col-span-2 lg:col-span-3">
-                <p className="text-xs text-gray-500 mb-1">
-                  Description
-                </p>
+                <p className="text-xs text-gray-500 mb-1">Description</p>
                 <p className="text-sm text-gray-800 whitespace-pre-wrap break-words">
                   {item.description}
                 </p>
@@ -660,9 +631,7 @@ export default function ItemDetailPage() {
                   <th className="py-3 px-4">SERIAL NUMBER</th>
                   <th className="py-3 px-4">BARCODE</th>
                   {canViewPurchasePrice && (
-                    <th className="py-3 px-4 text-right">
-                      PURCHASE PRICE
-                    </th>
+                    <th className="py-3 px-4 text-right">PURCHASE PRICE</th>
                   )}
                   <th className="py-3 px-4">STATUS</th>
                 </tr>
@@ -676,10 +645,7 @@ export default function ItemDetailPage() {
                       className="border-b last:border-0 hover:bg-gray-50"
                     >
                       <td className="py-3 px-4 font-medium">
-                        {unit.itemCode ||
-                          item.deviceCode ||
-                          item.sku ||
-                          "—"}
+                        {unit.itemCode || item.deviceCode || item.sku || "—"}
                       </td>
 
                       <td className="py-3 px-4 text-indigo-700 font-medium">
@@ -808,10 +774,7 @@ export default function ItemDetailPage() {
                   ))
                 ) : (
                   <tr>
-                    <td
-                      colSpan={8}
-                      className="py-12 text-center text-gray-400"
-                    >
+                    <td colSpan={8} className="py-12 text-center text-gray-400">
                       No stock movements have been recorded for this item.
                     </td>
                   </tr>
@@ -821,10 +784,10 @@ export default function ItemDetailPage() {
           </div>
 
           <p className="text-xs text-gray-500 mt-3">
-            Showing the stock movements returned by the backend. The current
-            API response may be limited to the latest 50 movements.
+            Showing the stock movements returned by the backend. The current API
+            response may be limited to the latest 50 movements.
           </p>
-        </section>  
+        </section>
       </div>
     </div>
   );
