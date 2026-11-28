@@ -57,6 +57,8 @@ type TransferItemDetails = {
   imageUrl?: string | null;
   category?: { name: string } | null;
   brand?: { name: string } | null;
+  salePrice?: number | string | null;
+  mrp?: number | string | null;
   unit?: {
     name: string;
     shortName?: string | null;
@@ -122,10 +124,7 @@ export default function StockTransfersPage() {
   const [toStoreCode, setToStoreCode] = useState("");
   const [notes, setNotes] = useState("");
   const [search, setSearch] = useState("");
-
-  const [receiptBarcodes, setReceiptBarcodes] = useState<
-    Record<string, string>
-  >({});
+  const [receiptImeis, setReceiptImeis] = useState<Record<string, string>>({});
   const [receiptSelections, setReceiptSelections] = useState<
     Record<string, boolean>
   >({});
@@ -295,26 +294,30 @@ export default function StockTransfersPage() {
     setSuccess("");
 
     const pending = getPendingUnits(transfer);
+
     const selected = pending.filter((unit) => receiptSelections[unit.id]);
 
     if (selected.length === 0) {
-      setError("Select at least one pending device to receive.");
-      return;
-    }
-
-    const missingBarcode = selected.find(
-      (unit) => (receiptBarcodes[unit.id] || "").trim().length < 3,
-    );
-
-    if (missingBarcode) {
-      setError("Enter or scan a valid barcode for every selected device.");
+      setError("Select at least one pending device.");
       return;
     }
 
     const payload = selected.map((unit) => ({
       transferUnitId: unit.id,
-      barcode: receiptBarcodes[unit.id].trim(),
+      imei: (receiptImeis[unit.id] ?? unit.inventoryUnit.imei ?? "").trim(),
     }));
+
+    const invalid = payload.find((unit) => !/^\d{15}$/.test(unit.imei));
+
+    if (invalid) {
+      setError("Enter a valid 15-digit IMEI for every selected device.");
+      return;
+    }
+
+    if (new Set(payload.map((unit) => unit.imei)).size !== payload.length) {
+      setError("Duplicate IMEI entered. Check the selected devices.");
+      return;
+    }
 
     setReceivingTransferId(transfer.id);
 
@@ -325,18 +328,26 @@ export default function StockTransfersPage() {
       const remaining = response.data?.pendingCount ?? 0;
 
       setSuccess(
-        `${received} device(s) received successfully. ${remaining} device(s) remain pending in this transfer.`,
+        `${received} device(s) successfully added to Items. ${remaining} device(s) are still pending.`,
       );
 
       setReceiptSelections((current) => {
         const next = { ...current };
-        selected.forEach((unit) => delete next[unit.id]);
+
+        selected.forEach((unit) => {
+          delete next[unit.id];
+        });
+
         return next;
       });
 
-      setReceiptBarcodes((current) => {
+      setReceiptImeis((current) => {
         const next = { ...current };
-        selected.forEach((unit) => delete next[unit.id]);
+
+        selected.forEach((unit) => {
+          delete next[unit.id];
+        });
+
         return next;
       });
 
@@ -345,7 +356,7 @@ export default function StockTransfersPage() {
       setError(
         err instanceof ApiError
           ? err.message
-          : "Unable to confirm receipt. Check the barcodes and try again.",
+          : "Unable to receive devices. Check the IMEI and try again.",
       );
     } finally {
       setReceivingTransferId("");
@@ -577,15 +588,15 @@ export default function StockTransfersPage() {
           <div>
             <h2 className="font-semibold text-slate-900">Pending Items</h2>
             <p className="text-xs text-slate-500">
-              Items dispatched by another branch appear here. Check the item
-              details, enter or scan the receiving branch's barcode, and confirm
-              receipt.
+              Review the transferred product details, confirm or correct its
+              IMEI, and add the accepted device to this store's inventory. A new
+              local barcode is generated automatically
             </p>
           </div>
         </div>
         {pendingTransfers.length === 0 ? (
           <p className="rounded-lg bg-slate-50 p-5 text-sm text-slate-500">
-            No pending transfers are waiting for receipt by this store.
+            No pending transfers are waiting for receipt by this store
           </p>
         ) : (
           pendingTransfers.map((transfer) => {
@@ -627,11 +638,10 @@ export default function StockTransfersPage() {
                       <table className="w-full min-w-[700px] text-left text-sm">
                         <thead className="bg-slate-50 text-xs text-slate-500">
                           <tr>
-                            <th className="px-3 py-2">Receive</th>
-                            <th className="px-3 py-2">Device</th>
-                            <th className="px-3 py-2">IMEI</th>
-                            <th className="px-3 py-2">Item code</th>
-                            <th className="px-3 py-2">Scan / enter barcode</th>
+                            <th className="px-3 py-2">Select</th>
+                            <th className="px-3 py-2">Product details</th>
+                            <th className="px-3 py-2">IMEI (editable)</th>
+                            <th className="px-3 py-2">Source item code</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -647,7 +657,7 @@ export default function StockTransfersPage() {
                                       [unit.id]: event.target.checked,
                                     }))
                                   }
-                                  aria-label={`Receive ${unit.inventoryUnit.imei || unit.id}`}
+                                  aria-label={`Receive ${unit.itemName}`}
                                 />
                               </td>
 
@@ -657,7 +667,7 @@ export default function StockTransfersPage() {
                                 </div>
 
                                 {unit.itemDetails && (
-                                  <div className="mt-1 space-y-1 text-xs font-normal text-slate-500">
+                                  <div className="mt-2 space-y-1 text-xs text-slate-500">
                                     {unit.itemDetails.brand?.name && (
                                       <div>
                                         Brand: {unit.itemDetails.brand.name}
@@ -671,12 +681,21 @@ export default function StockTransfersPage() {
                                       </div>
                                     )}
 
+                                    {unit.itemDetails.modelName && (
+                                      <div>
+                                        Model: {unit.itemDetails.modelName}
+                                      </div>
+                                    )}
+
                                     {unit.itemDetails.sku && (
                                       <div>SKU: {unit.itemDetails.sku}</div>
                                     )}
 
                                     {unit.itemDetails.description && (
-                                      <div>{unit.itemDetails.description}</div>
+                                      <div>
+                                        Description:{" "}
+                                        {unit.itemDetails.description}
+                                      </div>
                                     )}
 
                                     {unit.itemDetails.hsnSac && (
@@ -691,37 +710,59 @@ export default function StockTransfersPage() {
                                       </div>
                                     )}
 
+                                    {unit.itemDetails.salePrice != null && (
+                                      <div>
+                                        Sale Price: ₹
+                                        {Number(
+                                          unit.itemDetails.salePrice,
+                                        ).toLocaleString("en-IN")}
+                                      </div>
+                                    )}
+
+                                    {unit.itemDetails.mrp != null && (
+                                      <div>
+                                        MRP: ₹
+                                        {Number(
+                                          unit.itemDetails.mrp,
+                                        ).toLocaleString("en-IN")}
+                                      </div>
+                                    )}
+
                                     {unit.itemDetails.unit?.name && (
                                       <div>
                                         Unit: {unit.itemDetails.unit.name}
-                                        {unit.itemDetails.unit.shortName
-                                          ? ` (${unit.itemDetails.unit.shortName})`
-                                          : ""}
                                       </div>
                                     )}
                                   </div>
                                 )}
                               </td>
 
-                              <td className="px-3 py-3 font-mono text-slate-700">
-                                {unit.inventoryUnit.imei || "—"}
-                              </td>
-                              <td className="px-3 py-3 text-slate-600">
-                                {unit.inventoryUnit.itemCode || "—"}
-                              </td>
                               <td className="px-3 py-3">
                                 <input
-                                  value={receiptBarcodes[unit.id] || ""}
+                                  type="text"
+                                  inputMode="numeric"
+                                  autoComplete="off"
+                                  value={
+                                    receiptImeis[unit.id] ??
+                                    unit.inventoryUnit.imei ??
+                                    ""
+                                  }
                                   onChange={(event) =>
-                                    setReceiptBarcodes((current) => ({
+                                    setReceiptImeis((current) => ({
                                       ...current,
-                                      [unit.id]: event.target.value,
+                                      [unit.id]: event.target.value
+                                        .replace(/\D/g, "")
+                                        .slice(0, 15),
                                     }))
                                   }
-                                  placeholder="Scan barcode here"
-                                  maxLength={100}
-                                  className="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm"
+                                  placeholder="Enter 15-digit IMEI"
+                                  maxLength={15}
+                                  className="w-44 rounded-md border border-slate-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
                                 />
+                              </td>
+
+                              <td className="px-3 py-3 text-slate-600">
+                                {unit.inventoryUnit.itemCode || "—"}
                               </td>
                             </tr>
                           ))}
@@ -739,7 +780,7 @@ export default function StockTransfersPage() {
                         <CheckCircle2 className="h-4 w-4" />
                         {receivingTransferId === transfer.id
                           ? "Confirming..."
-                          : "Confirm selected receipt"}
+                          : "Add selected to Items"}
                       </button>
                     </div>
                   </>

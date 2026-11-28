@@ -122,19 +122,15 @@ export const api = {
      AUTH
   ======================================================= */
 
- login: (
-  email: string,
-  password: string,
-  rememberMe = false,
-) =>
-  request<ApiSuccess<any>>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({
-      email: email.trim().toLowerCase(),
-      password,
-      rememberMe,
+  login: (email: string, password: string, rememberMe = false) =>
+    request<ApiSuccess<any>>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        password,
+        rememberMe,
+      }),
     }),
-  }),
   storeByCode: (storeCode: string) =>
     request<
       ApiSuccess<{
@@ -463,7 +459,7 @@ export const api = {
     transferId: string,
     units: Array<{
       transferUnitId: string;
-      barcode: string;
+      imei: string;
     }>,
   ) =>
     request<ApiSuccess<any>>(
